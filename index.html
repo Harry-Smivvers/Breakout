@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Krakout</title>
+  <title>Breakout</title>
   <style>
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
@@ -60,16 +60,20 @@ const FR = CW;
 const FT = HUD_H + WALL;
 const FB = CH - WALL;
 
-const PAD_W      = 14;
-const PAD_H_BASE = 82;
-const PAD_X      = CW - WALL - 3 - PAD_W;
+const PAD_W        = 14;
+const PAD_H_BASE   = 82;
+const PAD_H_BIG    = Math.min(Math.round(PAD_H_BASE * 1.85), 220);
+const WIDE_PAUSE   = 50;   // frames game freezes while paddle grows
+const WIDE_SHRINK  = 70;   // frames shrink animation
+const PAD_X        = CW - WALL - 3 - PAD_W;
 const PAD_SPEED  = 6.5;
 
 const BALL_R     = 11;
 const BASE_SPEED = 5.2;
 const TRAIL_LEN  = 14;
+const BALL_COLORS = ['#7dff8a','#f1c40f','#74b9ff','#e67e22','#a29bfe','#00cec9','#fd79a8','#55efc4'];
 
-const BW = 28, BH = 42, BGAP = 5;
+const BW = 36, BH = 55, BGAP = 5;
 
 const COLORS = [
   '#e74c3c','#e67e22','#f1c40f','#27ae60',
@@ -195,6 +199,31 @@ const snd = {
         o.start(t + dt); o.stop(t + dt + 0.12);
       });
     } catch(e) {}
+  },
+  grow() {
+    try {
+      const ctx = audio(), t = ctx.currentTime;
+      // Mario-style ascending arpeggio
+      [0, 0.09, 0.18, 0.27, 0.36].forEach((dt, i) => {
+        const freq = [261, 329, 392, 523, 659][i];
+        const o = mkOsc(ctx, 'triangle', freq, t + dt);
+        const gn = mkEnv(ctx, 0.28, 0.01, 0.10, t + dt);
+        o.connect(gn); gn.connect(ctx.destination);
+        o.start(t + dt); o.stop(t + dt + 0.14);
+      });
+    } catch(e) {}
+  },
+  shrink() {
+    try {
+      const ctx = audio(), t = ctx.currentTime;
+      [0, 0.10, 0.20].forEach((dt, i) => {
+        const freq = [392, 261, 174][i];
+        const o = mkOsc(ctx, 'triangle', freq, t + dt);
+        const gn = mkEnv(ctx, 0.22, 0.01, 0.09, t + dt);
+        o.connect(gn); gn.connect(ctx.destination);
+        o.start(t + dt); o.stop(t + dt + 0.12);
+      });
+    } catch(e) {}
   }
 };
 
@@ -241,8 +270,8 @@ const pad = {
 
 // Balls array (supports multiball)
 let balls = [];
-function makeBall() {
-  return { x: 0, y: 0, vx: 0, vy: 0, r: BALL_R, trail: [] };
+function makeBall(color = null) {
+  return { x: 0, y: 0, vx: 0, vy: 0, r: BALL_R, trail: [], color };
 }
 
 // Particles
@@ -250,11 +279,14 @@ let particles = [];
 
 // Power-ups falling on field
 let powerUps  = [];
-let wideTimer = 0;   // frames wide paddle active
-let fireTimer = 0;   // frames fireball active
+let wideTimer       = 0;   // frames wide paddle active
+let widePauseTimer  = 0;   // frames game frozen during growth
+let wideShrinkTimer = 0;   // frames shrink animation
+let fireTimer       = 0;   // frames fireball active
 
 // Screen shake
 let shakeFrames = 0, shakeMag = 0;
+let ballColorIdx = 0;
 
 let bricks = [];
 
@@ -278,7 +310,7 @@ function spawnExplosion(x, y, color) {
 // ─── Power-ups ─────────────────────────────────────────────────────────────
 const PU_TYPES  = ['multiball', 'wide', 'fireball'];
 const PU_COLORS = { multiball: '#f1c40f', wide: '#3498db', fireball: '#ff6b35' };
-const PU_LABELS = { multiball: 'x3', wide: 'BIG', fireball: 'HOT' };
+const PU_LABELS = { multiball: 'Ball', wide: 'BIG', fireball: 'HOT' };
 
 function trySpawnPowerUp(x, y) {
   if (Math.random() < 0.25) {
@@ -288,26 +320,25 @@ function trySpawnPowerUp(x, y) {
 }
 
 function activatePowerUp(type) {
-  snd.powerup();
+  if (type !== 'wide') snd.powerup();
   if (type === 'wide') {
-    wideTimer = 600;
-    pad.h = Math.min(PAD_H_BASE * 1.85, FB - FT - 4);
-    pad.y  = clamp(pad.y, FT, FB - pad.h);
+    wideTimer      = 1200;   // 20 seconds
+    widePauseTimer = WIDE_PAUSE;
+    wideShrinkTimer = 0;
+    snd.grow();
   } else if (type === 'fireball') {
     fireTimer = 480;
   } else if (type === 'multiball') {
     const active = balls.filter(b => b.vx !== 0 || b.vy !== 0);
-    const ref    = active.length > 0 ? active[0] : balls[0];
+    const ref = active.length > 0 ? active[0] : balls[0];
     if (ref) {
-      for (let i = 0; i < 2; i++) {
-        const nb  = makeBall();
-        nb.x = ref.x; nb.y = ref.y;
-        const ang = Math.atan2(ref.vy, ref.vx) + (i === 0 ? 0.45 : -0.45);
-        const sp  = Math.hypot(ref.vx, ref.vy) || BASE_SPEED * speedMult;
-        nb.vx = Math.cos(ang) * sp;
-        nb.vy = Math.sin(ang) * sp;
-        balls.push(nb);
-      }
+      const nb  = makeBall(BALL_COLORS[ballColorIdx++ % BALL_COLORS.length]);
+      nb.x = ref.x; nb.y = ref.y;
+      const ang = Math.atan2(ref.vy, ref.vx) + 0.45;
+      const sp  = Math.hypot(ref.vx, ref.vy) || BASE_SPEED * speedMult;
+      nb.vx = Math.cos(ang) * sp;
+      nb.vy = Math.sin(ang) * sp;
+      balls.push(nb);
     }
   }
 }
@@ -354,16 +385,15 @@ function genLevel(lvl) {
       }
       if (!place) continue;
 
-      let maxHp = 1;
-      if (lvl >= 2) maxHp = Math.random() < 0.35 ? 2 : 1;
-      if (lvl >= 3) { const rn = Math.random(); maxHp = rn < 0.2 ? 3 : rn < 0.55 ? 2 : 1; }
-
+      const pu = Math.random() < 0.25
+        ? PU_TYPES[Math.floor(Math.random() * PU_TYPES.length)]
+        : null;
       bricks.push({
         x: ox + c * stepX, y: oy + r * stepY,
         w: BW, h: BH,
-        hp: maxHp, maxHp,
         alive: true,
-        color: COLORS[Math.floor(Math.random() * COLORS.length)]
+        color: COLORS[Math.floor(Math.random() * COLORS.length)],
+        pu
       });
     }
   }
@@ -393,7 +423,7 @@ function launch() {
 function restart() {
   score = 0; level = 1; lives = 2; speedMult = 1;
   stateBeforePause = null; rightWall = false;
-  wideTimer = 0; fireTimer = 0;
+  wideTimer = 0; widePauseTimer = 0; wideShrinkTimer = 0; fireTimer = 0;
   pad.y = (FT + FB) / 2 - PAD_H_BASE / 2;
   pad.h = PAD_H_BASE; pad.flash = 0;
   particles = []; powerUps = [];
@@ -513,8 +543,29 @@ function update(dt) {
   pad.y = clamp(pad.y + pdy * PAD_SPEED * dt, FT, FB - pad.h);
   if (pad.flash > 0) pad.flash -= dt;
 
-  // Timers
-  if (wideTimer > 0) { wideTimer -= dt; if (wideTimer <= 0) pad.h = PAD_H_BASE; }
+  // Wide: kurze Spielpause während Wachstum
+  if (widePauseTimer > 0) {
+    widePauseTimer -= dt;
+    const frac = 1 - Math.max(0, widePauseTimer) / WIDE_PAUSE;
+    pad.h = Math.round(PAD_H_BASE + (PAD_H_BIG - PAD_H_BASE) * frac);
+    pad.y = clamp(pad.y, FT, FB - pad.h);
+    return; // Spiel eingefroren während Wachstum
+  }
+  // Wide: countdown
+  if (wideTimer > 0) {
+    wideTimer -= dt;
+    if (wideTimer <= 0 && wideShrinkTimer === 0) {
+      wideShrinkTimer = WIDE_SHRINK;
+      snd.shrink();
+    }
+  }
+  // Wide: Schrumpf-Animation (Spiel läuft weiter)
+  if (wideShrinkTimer > 0) {
+    wideShrinkTimer -= dt;
+    const frac = Math.max(0, wideShrinkTimer) / WIDE_SHRINK;
+    pad.h = Math.round(PAD_H_BASE + (PAD_H_BIG - PAD_H_BASE) * frac);
+    pad.y = clamp(pad.y, FT, FB - pad.h);
+  }
   if (fireTimer > 0) fireTimer -= dt;
   if (shakeFrames > 0) shakeFrames -= dt;
 
@@ -609,14 +660,23 @@ function update(dt) {
       if (b.x + b.r > brick.x && b.x - b.r < brick.x + brick.w &&
           b.y + b.r > brick.y && b.y - b.r < brick.y + brick.h) {
         hitBrick = true;
-        brick.hp--;
+        brick.alive = false;
         score += 10;
         snd.brick();
         spawnExplosion(brick.x + brick.w / 2, brick.y + brick.h / 2, brick.color);
-        shakeFrames = 5; shakeMag = 2;
-        if (brick.hp <= 0) {
-          brick.alive = false;
-          trySpawnPowerUp(brick.x + brick.w / 2, brick.y + brick.h / 2);
+        shakeFrames = 2; shakeMag = 0.8;
+        if (brick.pu === 'multiball') {
+          const nb  = makeBall(BALL_COLORS[ballColorIdx++ % BALL_COLORS.length]);
+          nb.x = b.x; nb.y = b.y;
+          const ang = Math.atan2(b.vy, b.vx) + (Math.random() < 0.5 ? 0.6 : -0.6);
+          const sp  = Math.hypot(b.vx, b.vy);
+          nb.vx = Math.cos(ang) * sp;
+          nb.vy = Math.sin(ang) * sp;
+          balls.push(nb);
+        } else if (brick.pu === 'wide' && wideTimer === 0 && widePauseTimer === 0 && wideShrinkTimer === 0) {
+          activatePowerUp('wide');
+        } else if (brick.pu === 'fireball') {
+          activatePowerUp('fireball');
         }
         // Fireball: pass through without reflecting
         if (fireTimer > 0) continue;
@@ -699,10 +759,11 @@ function drawHUD() {
   let px = 14;
   g.font = 'bold 11px monospace';
   g.textAlign = 'left';
-  if (wideTimer > 0) {
-    g.fillStyle = PU_COLORS.wide;
-    g.fillText('BIG ' + Math.ceil(wideTimer / 60) + 's', px, 12);
-    px += 60;
+  if (wideTimer > 0 || widePauseTimer > 0 || wideShrinkTimer > 0) {
+    g.fillStyle = wideShrinkTimer > 0 ? '#e67e22' : PU_COLORS.wide;
+    const label = widePauseTimer > 0 ? 'BIG!' : wideShrinkTimer > 0 ? 'BIG\u2193' : 'BIG ' + Math.ceil(wideTimer / 60) + 's';
+    g.fillText(label, px, 12);
+    px += 70;
   }
   if (fireTimer > 0) {
     g.fillStyle = PU_COLORS.fireball;
@@ -735,11 +796,6 @@ function drawBricks() {
     if (!b.alive) continue;
     g.fillStyle = b.color;
     g.fillRect(b.x, b.y, b.w, b.h);
-    // Darken when damaged
-    if (b.hp < b.maxHp) {
-      g.fillStyle = `rgba(0,0,0,${(0.45 * (1 - b.hp / b.maxHp)).toFixed(2)})`;
-      g.fillRect(b.x, b.y, b.w, b.h);
-    }
     g.fillStyle = 'rgba(255,255,255,0.38)';
     g.fillRect(b.x, b.y, b.w, 4);
     g.fillStyle = 'rgba(0,0,0,0.32)';
@@ -747,13 +803,23 @@ function drawBricks() {
     g.strokeStyle = 'rgba(0,0,0,0.42)';
     g.lineWidth = 1;
     g.strokeRect(b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1);
-    // HP number
-    if (b.maxHp > 1) {
-      g.fillStyle = 'rgba(255,255,255,0.92)';
-      g.font = 'bold 13px monospace';
+
+    // Power-up indicator
+    if (b.pu) {
+      const pulse = 0.6 + 0.4 * Math.sin(frameCount * 0.12 + b.x);
+      const s = 8;
+      const ix = b.x + b.w / 2 - s / 2;
+      const iy = b.y + b.h / 2 - s / 2;
+      g.fillStyle = PU_COLORS[b.pu];
+      g.globalAlpha = pulse;
+      g.fillRect(ix, iy, s, s);
+      g.globalAlpha = 1;
+      g.fillStyle = '#fff';
+      g.font = 'bold 7px monospace';
       g.textAlign = 'center';
-      g.fillText(b.hp, b.x + b.w / 2, b.y + b.h / 2 + 5);
+      g.fillText(PU_LABELS[b.pu], b.x + b.w / 2, b.y + b.h / 2 + 3);
     }
+
   }
 }
 
@@ -782,7 +848,7 @@ function drawPowerUps() {
 }
 
 function drawPaddle() {
-  const isWide    = wideTimer > 0;
+  const isWide    = wideTimer > 0 || widePauseTimer > 0 || wideShrinkTimer > 0;
   const flashAmt  = pad.flash > 0 ? Math.min(1, pad.flash / 10) : 0;
 
   g.fillStyle = isWide ? '#1a6fa3' : '#7eb8d4';
@@ -808,14 +874,16 @@ function drawBalls() {
     // Trail
     for (let i = 0; i < b.trail.length; i++) {
       const t    = b.trail[i];
-      const frac = i / b.trail.length;
-      const r    = Math.max(1, b.r * frac * 0.75);
-      const a    = frac * 0.55;
+      const frac = i / b.trail.length;      // 0 = oldest, 1 = newest
+      const a    = frac * 0.55;             // older = more transparent
       g.beginPath();
-      g.arc(t.x, t.y, r, 0, Math.PI * 2);
+      g.arc(t.x, t.y, b.r, 0, Math.PI * 2);
+      const pulse = 0.5 + 0.5 * Math.sin(frameCount * 0.25);
       g.fillStyle = isFire
-        ? `rgba(255,${Math.floor(80 + frac * 120)},0,${a.toFixed(2)})`
-        : `rgba(160,180,255,${a.toFixed(2)})`;
+        ? `rgba(${Math.floor(180+pulse*60)},${Math.floor(pulse*40)},0,${a.toFixed(2)})`
+        : b.color
+          ? `rgba(20,110,40,${a.toFixed(2)})`
+          : `rgba(60,70,140,${a.toFixed(2)})`;
       g.fill();
     }
     // Glow for fireball
@@ -828,9 +896,15 @@ function drawBalls() {
     // Ball
     const gr = g.createRadialGradient(b.x - 3, b.y - 3, 1, b.x, b.y, b.r);
     if (isFire) {
-      gr.addColorStop(0,   '#fff8f0');
-      gr.addColorStop(0.4, '#ffaa00');
-      gr.addColorStop(1,   '#cc2200');
+      const pulse = 0.5 + 0.5 * Math.sin(frameCount * 0.25);
+      const mid   = Math.floor(80 + pulse * 120);
+      gr.addColorStop(0,   '#ffffff');
+      gr.addColorStop(0.3, `rgb(255,${mid},${Math.floor(pulse * 40)})`);
+      gr.addColorStop(1,   `rgb(${180 + Math.floor(pulse*40)},0,0)`);
+    } else if (b.color) {
+      gr.addColorStop(0,   '#eeffee');
+      gr.addColorStop(0.5, '#7dff8a');
+      gr.addColorStop(1,   '#2db840');
     } else {
       gr.addColorStop(0,   '#ffffff');
       gr.addColorStop(0.6, '#d8d8ee');
