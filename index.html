@@ -61,13 +61,15 @@ const CW = 540, CH = 960;   // Portrait
 const HUD_H = 76;
 const WALL  = 12;
 
-const FL = WALL;
-const FR = CW - WALL;       // rechts immer geschlossen
-const FT = HUD_H + WALL;
-const FB = CH - WALL;       // Unterkante (offen – Ball fällt durch)
+const BW = 66, BH = 43, BGAP = 5;
 
-const WALL_R        = WALL * 2; // thickness of bottom power-up wall
-const PAD_H_THICK   = 14;       // paddle thickness (Höhe), immer fix
+const FL = WALL;
+const FR = CW - WALL;                // rechts immer geschlossen
+const FT = HUD_H + WALL;
+const FB = CH - WALL - 2 * BH;      // ~2 Steinhöhen über Canvasrand → Fingerzone darunter
+
+const WALL_R        = WALL * 4; // thickness of bottom power-up wall (48 px)
+const PAD_H_THICK   = 22;       // paddle thickness (Höhe), immer fix
 const WIDE_PAUSE   = 50;   // frames game freezes while paddle grows
 const WIDE_SHRINK  = 70;   // frames shrink animation
 const HOT_PAUSE    = 55;   // frames game freezes during fireball transformation
@@ -79,8 +81,6 @@ const BASE_SPEED = 6;
 const BOUNCE_BOOST = 0.08; // speed added per bounce, as fraction of base speed
 const TRAIL_LEN  = 14;
 const BALL_COLORS = ['#7dff8a','#f1c40f','#74b9ff','#e67e22','#a29bfe','#00cec9','#fd79a8','#55efc4'];
-
-const BW = 66, BH = 43, BGAP = 5;
 
 const COLORS = [
   '#e74c3c','#e67e22','#f1c40f','#27ae60',
@@ -444,7 +444,7 @@ let frameCount = 0;
 // Paddle
 const pad = {
   x: (FL + FR) / 2 - Math.round((FR - FL) * 0.11), y: FB - PAD_H_THICK,
-  w: Math.round((FR - FL) * 0.22), h: PAD_H_THICK,
+  w: Math.round((FR - FL) * 0.154), h: PAD_H_THICK,
   flash: 0
 };
 
@@ -452,7 +452,7 @@ function updatePadDimensions() {
   pad.h = PAD_H_THICK;
   if (padImg.naturalWidth && padImg.naturalHeight) {
     // Basisbreite = ~22 % der Feldbreite; Bild wird gestreckt
-    padBaseW = Math.round((FR - FL) * 0.22);
+    padBaseW = Math.round((FR - FL) * 0.154);
     if (wideTimer === 0 && widePauseTimer === 0 && wideShrinkTimer === 0) {
       pad.w = padBaseW;
     }
