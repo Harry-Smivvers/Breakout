@@ -47,6 +47,8 @@
   <button class="btn" id="bHit">HIT</button>
   <button class="btn" id="bPause">Pause</button>
   <button class="btn" id="bWall">Wall</button>
+  <button class="btn" id="bSpeedUp">+</button>
+  <button class="btn" id="bSpeedDown">−</button>
 </div>
 <script>
 'use strict';
@@ -68,6 +70,7 @@ const WIDE_PAUSE   = 50;   // frames game freezes while paddle grows
 const WIDE_SHRINK  = 70;   // frames shrink animation
 const HOT_PAUSE    = 55;   // frames game freezes during fireball transformation
 const PAD_X        = CW - WALL - 3 - PAD_W;
+const PAD_RIGHT    = CW - WALL - 3;
 const PAD_SPEED  = 6.5;
 
 const BALL_R     = 14;
@@ -253,6 +256,110 @@ const snd = {
       });
     } catch(e) {}
   },
+  levelComplete() {
+    try {
+      const ctx = audio(), t = ctx.currentTime;
+
+      // Aufsteigende Fanfare (Dreieck) – Hauptmelodie
+      const melody = [
+        [0.00, 523, 0.18], [0.12, 659, 0.18], [0.24, 784, 0.18],
+        [0.36, 1047, 0.30], [0.60, 880, 0.16], [0.72, 1047, 0.16],
+        [0.84, 1175, 0.50],
+        // zweite Phrase
+        [1.10, 784, 0.16], [1.22, 880, 0.16], [1.34, 1047, 0.16],
+        [1.46, 1319, 0.80]
+      ];
+      melody.forEach(([dt, freq, dur]) => {
+        const o = mkOsc(ctx, 'triangle', freq, t + dt);
+        const gn = mkEnv(ctx, 0.26, 0.01, dur, t + dt);
+        o.connect(gn); gn.connect(ctx.destination);
+        o.start(t + dt); o.stop(t + dt + dur + 0.05);
+      });
+
+      // Sawtooth-Kontra-Bass, gibt Fülle
+      [[0.00, 131], [0.36, 174], [0.84, 196], [1.46, 196]].forEach(([dt, freq]) => {
+        const o = mkOsc(ctx, 'sawtooth', freq, t + dt);
+        const ws = ctx.createWaveShaper(); ws.curve = distCurve(8);
+        const gn = mkEnv(ctx, 0.14, 0.02, 0.28, t + dt);
+        o.connect(ws); ws.connect(gn); gn.connect(ctx.destination);
+        o.start(t + dt); o.stop(t + dt + 0.35);
+      });
+
+      // Glöckchen-Shimmer – zwei Wellen
+      [0.36, 0.48, 0.60, 0.72, 1.10, 1.22, 1.34, 1.46, 1.58, 1.70].forEach((dt, i) => {
+        const freqs = [2093, 1760, 2637, 2093, 2349, 1976, 2637, 2093, 2794, 2349];
+        const o = mkOsc(ctx, 'sine', freqs[i], t + dt);
+        const gn = mkEnv(ctx, 0.11, 0.004, 0.10, t + dt);
+        o.connect(gn); gn.connect(ctx.destination);
+        o.start(t + dt); o.stop(t + dt + 0.13);
+      });
+
+      // Percussion-Rauschen auf den Betonungen
+      [0.00, 0.36, 0.84, 1.46].forEach(dt => {
+        const nm = mkNoise(ctx, t + dt, 0.06);
+        const nf = ctx.createBiquadFilter();
+        nf.type = 'bandpass'; nf.frequency.value = 1200; nf.Q.value = 1.5;
+        const ng = mkEnv(ctx, 0.12, 0.002, 0.055, t + dt);
+        nm.connect(nf); nf.connect(ng); ng.connect(ctx.destination);
+      });
+
+      // Langer Schluss-Akkord (Sinus-Triad) ab 1.46 s
+      [1047, 1319, 1568].forEach((freq, i) => {
+        const o = mkOsc(ctx, 'sine', freq, t + 1.46);
+        const gn = mkEnv(ctx, 0.13 - i * 0.02, 0.03, 0.80, t + 1.46);
+        o.connect(gn); gn.connect(ctx.destination);
+        o.start(t + 1.46); o.stop(t + 2.40);
+      });
+
+    } catch(e) {}
+  },
+  wallAppear() {
+    try {
+      const ctx = audio(), t = ctx.currentTime;
+      // Schwerer Bass-Impact
+      const o1 = mkOsc(ctx, 'sawtooth', 55, t);
+      o1.frequency.exponentialRampToValueAtTime(110, t + 0.18);
+      const ws = ctx.createWaveShaper(); ws.curve = distCurve(20);
+      const g1 = mkEnv(ctx, 0.35, 0.005, 0.22, t);
+      o1.connect(ws); ws.connect(g1); g1.connect(ctx.destination);
+      o1.start(t); o1.stop(t + 0.28);
+      // Aufsteigendes Materialise-Rauschen
+      const nm = mkNoise(ctx, t, 0.30);
+      const nf = ctx.createBiquadFilter();
+      nf.type = 'bandpass'; nf.frequency.setValueAtTime(400, t);
+      nf.frequency.exponentialRampToValueAtTime(2400, t + 0.28);
+      nf.Q.value = 2.5;
+      const ng = mkEnv(ctx, 0.22, 0.01, 0.22, t);
+      nm.connect(nf); nf.connect(ng); ng.connect(ctx.destination);
+      // Teal-Klang: kurzer Akkord
+      [[0.18, 277], [0.24, 370], [0.30, 554]].forEach(([dt, freq]) => {
+        const o = mkOsc(ctx, 'sine', freq, t + dt);
+        const gn = mkEnv(ctx, 0.14, 0.01, 0.14, t + dt);
+        o.connect(gn); gn.connect(ctx.destination);
+        o.start(t + dt); o.stop(t + dt + 0.18);
+      });
+    } catch(e) {}
+  },
+  wallDisappear() {
+    try {
+      const ctx = audio(), t = ctx.currentTime;
+      // Absteigendes Crumble-Rauschen
+      const nm = mkNoise(ctx, t, 0.35);
+      const nf = ctx.createBiquadFilter();
+      nf.type = 'bandpass'; nf.frequency.setValueAtTime(2000, t);
+      nf.frequency.exponentialRampToValueAtTime(120, t + 0.32);
+      nf.Q.value = 1.8;
+      const ng = mkEnv(ctx, 0.20, 0.005, 0.28, t);
+      nm.connect(nf); nf.connect(ng); ng.connect(ctx.destination);
+      // Fallende Töne
+      [[0.00, 370], [0.10, 277], [0.22, 185]].forEach(([dt, freq]) => {
+        const o = mkOsc(ctx, 'triangle', freq, t + dt);
+        const gn = mkEnv(ctx, 0.16, 0.005, 0.12, t + dt);
+        o.connect(gn); gn.connect(ctx.destination);
+        o.start(t + dt); o.stop(t + dt + 0.16);
+      });
+    } catch(e) {}
+  },
   ballPop() {
     try {
       const ctx = audio(), t = ctx.currentTime;
@@ -271,6 +378,15 @@ const snd = {
     } catch(e) {}
   }
 };
+
+// ─── Paddle image ──────────────────────────────────────────────────────────
+const padImg = new Image();
+padImg.src = 'stick-v.png';
+
+// ─── Stone images ──────────────────────────────────────────────────────────
+const stoneImgs = ['stone.png', 'stone2.png', 'stone3.png'].map(src => {
+  const img = new Image(); img.src = src; return img;
+});
 
 // ─── Canvas & Scale ────────────────────────────────────────────────────────
 const canvas = document.getElementById('c');
@@ -303,6 +419,7 @@ let stateBeforePause = null;
 let rightWall        = false;
 let score = 0, level = 1, lives = 2;
 let speedMult  = 1;
+let userSpeed  = 1.0;  // user-controlled multiplier
 let stateTimer = 0;
 let frameCount = 0;
 
@@ -312,6 +429,13 @@ const pad = {
   w: PAD_W, h: PAD_H_BASE,
   flash: 0
 };
+
+function updatePadDimensions() {
+  if (padImg.naturalWidth && padImg.naturalHeight) {
+    pad.w = Math.round(pad.h * padImg.naturalWidth / padImg.naturalHeight);
+  }
+  pad.x = PAD_RIGHT - pad.w;
+}
 
 // Balls array (supports multiball)
 let balls = [];
@@ -327,10 +451,15 @@ let powerUps  = [];
 let wideTimer       = 0;   // frames wide paddle active
 let widePauseTimer  = 0;   // frames game frozen during growth
 let wideShrinkTimer = 0;   // frames shrink animation
+const WALL_ANIM     = 45;  // frames for wall appear/disappear animation
+let wallPowerTimer  = 0;   // frames timed wall active (600 = 10 s)
+let wallAnimIn      = 0;   // appear animation countdown
+let wallAnimOut     = 0;   // disappear animation countdown
 // fireTimer and transform are now per-ball (b.fire, b.transform)
 
 // Screen shake
 let shakeFrames = 0, shakeMag = 0;
+let padHoldTimer = 0;
 let ballColorIdx = 0;
 
 let bricks = [];
@@ -353,9 +482,9 @@ function spawnExplosion(x, y, color) {
 }
 
 // ─── Power-ups ─────────────────────────────────────────────────────────────
-const PU_TYPES  = ['multiball', 'wide', 'fireball'];
-const PU_COLORS = { multiball: '#f1c40f', wide: '#3498db', fireball: '#ff6b35' };
-const PU_LABELS = { multiball: 'Ball', wide: 'BIG', fireball: 'HOT' };
+const PU_TYPES  = ['multiball', 'wide', 'fireball', 'wall'];
+const PU_COLORS = { multiball: '#f1c40f', wide: '#3498db', fireball: '#ff6b35', wall: '#00cec9' };
+const PU_LABELS = { multiball: 'Ball', wide: 'BIG', fireball: 'HOT', wall: 'Wall' };
 
 function trySpawnPowerUp(x, y) {
   if (Math.random() < 0.25) {
@@ -438,6 +567,7 @@ function genLevel(lvl) {
         w: BW, h: BH,
         alive: true,
         color: COLORS[Math.floor(Math.random() * COLORS.length)],
+        stoneIdx: Math.floor(Math.random() * stoneImgs.length),
         pu
       });
     }
@@ -459,7 +589,7 @@ function launch() {
   b.x = pad.x - b.r - 1;
   b.y = pad.y + pad.h / 2;
   const angle = (Math.random() * 80 - 40) * Math.PI / 180;
-  const sp = BASE_SPEED * speedMult;
+  const sp = BASE_SPEED * speedMult * userSpeed;
   b.vx = -Math.cos(angle) * sp;
   b.vy =  Math.sin(angle) * sp;
   state = 'PLAYING';
@@ -469,13 +599,22 @@ function restart() {
   score = 0; level = 1; lives = 2; speedMult = 1;
   stateBeforePause = null; rightWall = false;
   wideTimer = 0; widePauseTimer = 0; wideShrinkTimer = 0;
+  wallPowerTimer = 0; wallAnimIn = 0; wallAnimOut = 0;
 
   pad.y = (FT + FB) / 2 - PAD_H_BASE / 2;
-  pad.h = PAD_H_BASE; pad.flash = 0;
+  pad.h = PAD_H_BASE; pad.flash = 0; updatePadDimensions();
   particles = []; powerUps = [];
   genLevel(1);
   snapBall();
   state = 'READY';
+}
+
+function changeSpeed(factor) {
+  const prev = userSpeed;
+  userSpeed = Math.round(clamp(userSpeed * factor, 0.4, 4.0) * 100) / 100;
+  if (userSpeed === prev) return;
+  const ratio = userSpeed / prev;
+  for (const b of balls) { b.vx *= ratio; b.vy *= ratio; }
 }
 
 function togglePause() {
@@ -499,6 +638,8 @@ document.addEventListener('keydown', e => {
   }
   if (e.code === 'Space')  { e.preventDefault(); togglePause(); }
   if (e.code === 'KeyW')   rightWall = !rightWall;
+  if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd')      changeSpeed(1.1);
+  if (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract') changeSpeed(1 / 1.1);
   if (e.key  === '!')      lives++;
   if (e.key  === '§') {
     level++;
@@ -541,6 +682,13 @@ function toggleWall() { rightWall = !rightWall; bWall.classList.toggle('active',
 bWall.addEventListener('mousedown',  toggleWall);
 bWall.addEventListener('touchstart', ev => { ev.preventDefault(); toggleWall(); }, { passive: false });
 
+const bSpeedUp   = document.getElementById('bSpeedUp');
+const bSpeedDown = document.getElementById('bSpeedDown');
+bSpeedUp.addEventListener('mousedown',  () => changeSpeed(1.1));
+bSpeedUp.addEventListener('touchstart', ev => { ev.preventDefault(); changeSpeed(1.1); }, { passive: false });
+bSpeedDown.addEventListener('mousedown',  () => changeSpeed(1 / 1.1));
+bSpeedDown.addEventListener('touchstart', ev => { ev.preventDefault(); changeSpeed(1 / 1.1); }, { passive: false });
+
 // Touch on canvas
 let tY0 = 0, tYlast = 0, tMoved = false, tTime = 0;
 canvas.addEventListener('touchstart', ev => {
@@ -580,8 +728,8 @@ function tickState() {
         level++;
         speedMult = Math.min(1 + (level - 1) * 0.12, 1.8);
         wideTimer = 0; widePauseTimer = 0; wideShrinkTimer = 0;
-      
-        pad.h = PAD_H_BASE;
+        wallPowerTimer = 0; wallAnimIn = 0; wallAnimOut = 0;
+        pad.h = PAD_H_BASE; updatePadDimensions();
         for (const b of balls) b.fire = 0;
         genLevel(level); snapBall(); state = 'READY';
       }
@@ -591,11 +739,21 @@ function tickState() {
 
 // ─── Update ────────────────────────────────────────────────────────────────
 function update(dt) {
-  // Paddle movement
+  // Paddle movement with hold-acceleration
   let pdy = 0;
-  if (keys['ArrowUp']   || btnState.up)               pdy -= 1;
+  if (keys['ArrowUp']   || btnState.up)                  pdy -= 1;
   if (keys['ArrowDown'] || keys['KeyS'] || btnState.down) pdy += 1;
-  pad.y = clamp(pad.y + pdy * PAD_SPEED * dt, FT, FB - pad.h);
+  if (pdy !== 0) {
+    padHoldTimer += dt;
+  } else {
+    padHoldTimer = 0;
+  }
+  // After 0.2 s (12 frames) ramp up to 3× speed over the next ~0.8 s
+  const HOLD_START = 12;
+  const padSpeedFactor = padHoldTimer > HOLD_START
+    ? Math.min(3, 1 + (padHoldTimer - HOLD_START) / 48)
+    : 1;
+  pad.y = clamp(pad.y + pdy * PAD_SPEED * padSpeedFactor * dt, FT, FB - pad.h);
   if (pad.flash > 0) pad.flash -= dt;
 
   // Wide: kurze Spielpause während Wachstum
@@ -603,6 +761,7 @@ function update(dt) {
     widePauseTimer -= dt;
     const frac = 1 - Math.max(0, widePauseTimer) / WIDE_PAUSE;
     pad.h = Math.round(PAD_H_BASE + (PAD_H_BIG - PAD_H_BASE) * frac);
+    updatePadDimensions();
     pad.y = clamp(pad.y, FT, FB - pad.h);
     return; // Spiel eingefroren während Wachstum
   }
@@ -619,7 +778,21 @@ function update(dt) {
     wideShrinkTimer -= dt;
     const frac = Math.max(0, wideShrinkTimer) / WIDE_SHRINK;
     pad.h = Math.round(PAD_H_BASE + (PAD_H_BIG - PAD_H_BASE) * frac);
+    updatePadDimensions();
     pad.y = clamp(pad.y, FT, FB - pad.h);
+  }
+  // Wall power-up timer
+  if (wallAnimIn > 0)  wallAnimIn  -= dt;
+  if (wallAnimOut > 0) {
+    wallAnimOut -= dt;
+    if (wallAnimOut <= 0) wallPowerTimer = 0;
+  }
+  if (wallPowerTimer > 0) {
+    wallPowerTimer -= dt;
+    if (wallPowerTimer <= 0 && wallAnimOut === 0) {
+      wallAnimOut = WALL_ANIM;
+      snd.wallDisappear();
+    }
   }
   for (const b of balls) {
     if (b.transform > 0) {
@@ -680,7 +853,8 @@ function update(dt) {
     if (b.x - b.r < FL) { b.x = FL + b.r; b.vx =  Math.abs(b.vx); snd.wall(); }
 
     // Right side: wall or exit
-    if (rightWall) {
+    const walled = rightWall || wallPowerTimer > 0 || wallAnimOut > 0;
+    if (walled) {
       if (b.x + b.r > CW - WALL) {
         b.x = CW - WALL - b.r; b.vx = -Math.abs(b.vx); snd.wall();
       }
@@ -751,6 +925,11 @@ function update(dt) {
           hotTriggered = true;
           snd.fireStart();
           break; // exit brick loop (outer ball loop exits via hotTriggered)
+        } else if (brick.pu === 'wall') {
+          wallPowerTimer = 600; // 10 Sekunden
+          wallAnimIn  = WALL_ANIM;
+          wallAnimOut = 0;
+          snd.wallAppear();
         }
         // Fireball: pass through without reflecting
         if (b.fire > 0) continue;
@@ -767,7 +946,7 @@ function update(dt) {
   // Level complete?
   if (state === 'PLAYING' && bricks.every(b => !b.alive)) {
     state = 'LEVEL_COMPLETE'; stateTimer = 130;
-    powerUps = [];
+    powerUps = []; snd.levelComplete();
   }
 }
 
@@ -827,7 +1006,16 @@ function drawHUD() {
 
   g.textAlign = 'right';
   g.fillStyle = lives === 0 ? '#e74c3c' : '#d0d8ff';
-  g.fillText('Life: ' + lives, CW - 14, HUD_H - 10);
+  const lifeX = (wallPowerTimer > 0 || wallAnimIn > 0 || wallAnimOut > 0) ? CW - 90 : CW - 14;
+  g.fillText('Life: ' + lives, lifeX, HUD_H - 10);
+  if (wallPowerTimer > 0 || wallAnimIn > 0 || wallAnimOut > 0) {
+    const secs = wallPowerTimer > 0 ? Math.ceil(wallPowerTimer / 60) : 0;
+    const pulse = 0.7 + 0.3 * Math.sin(frameCount * 0.18);
+    g.fillStyle = wallAnimOut > 0
+      ? `rgba(255,100,100,${pulse.toFixed(2)})`
+      : `rgba(0,206,201,${pulse.toFixed(2)})`;
+    g.fillText('Wall ' + secs + 's', CW - 14, HUD_H - 10);
+  }
 
   // Power-up timers in HUD
   let px = 14;
@@ -843,6 +1031,11 @@ function drawHUD() {
   if (maxFire > 0) {
     g.fillStyle = PU_COLORS.fireball;
     g.fillText('HOT ' + Math.ceil(maxFire / 60) + 's', px, 12);
+    px += 70;
+  }
+  if (userSpeed !== 1.0) {
+    g.fillStyle = userSpeed > 1 ? '#f1c40f' : '#74b9ff';
+    g.fillText('SPD ' + userSpeed.toFixed(2) + 'x', px, 12);
   }
 }
 
@@ -851,10 +1044,45 @@ function drawWalls() {
   g.fillRect(0, HUD_H, CW, WALL);
   g.fillRect(0, HUD_H, WALL, CH - HUD_H);
   g.fillRect(0, CH - WALL, CW, WALL);
+
+  // Rechte Wand: manuell oder Power-up
+  const timedActive = wallPowerTimer > 0 || wallAnimIn > 0 || wallAnimOut > 0;
   if (rightWall) {
     g.fillStyle = '#2a5f3a';
     g.fillRect(CW - WALL, HUD_H, WALL, CH - HUD_H);
   }
+  if (timedActive) {
+    let xOff = 0, alpha = 1;
+    if (wallAnimIn > 0) {
+      // Einfahren von rechts
+      const frac = wallAnimIn / WALL_ANIM;
+      xOff  = Math.round(frac * WALL * 3);
+      alpha = 1 - frac;
+    } else if (wallAnimOut > 0) {
+      // Flackern + ausblenden
+      const frac = wallAnimOut / WALL_ANIM;
+      alpha = frac * (Math.floor(frameCount) % 5 < 3 ? 1 : 0.15);
+    }
+    g.save();
+    g.globalAlpha = Math.max(0, Math.min(1, alpha));
+    // Basis
+    g.fillStyle = '#007f72';
+    g.fillRect(CW - WALL + xOff, HUD_H, WALL, CH - HUD_H);
+    // Heller Kern
+    g.fillStyle = '#00cec9';
+    g.fillRect(CW - WALL + 2 + xOff, HUD_H, WALL - 4, CH - HUD_H);
+    // Glüh-Highlight links
+    g.fillStyle = 'rgba(0,255,240,0.30)';
+    g.fillRect(CW - WALL + xOff, HUD_H, 3, CH - HUD_H);
+    // Glow-Aura nach links
+    const grd = g.createLinearGradient(CW - WALL - 18 + xOff, 0, CW - WALL + xOff, 0);
+    grd.addColorStop(0, 'rgba(0,206,201,0)');
+    grd.addColorStop(1, 'rgba(0,206,201,0.25)');
+    g.fillStyle = grd;
+    g.fillRect(CW - WALL - 18 + xOff, HUD_H, 18, CH - HUD_H);
+    g.restore();
+  }
+
   g.fillStyle = 'rgba(255,255,255,0.13)';
   g.fillRect(0, HUD_H, CW, 2);
   g.fillRect(0, HUD_H, 2, CH - HUD_H);
@@ -869,13 +1097,34 @@ function drawWalls() {
 function drawBricks() {
   for (const b of bricks) {
     if (!b.alive) continue;
-    g.fillStyle = b.color;
-    g.fillRect(b.x, b.y, b.w, b.h);
-    g.fillStyle = 'rgba(255,255,255,0.38)';
+    const img = stoneImgs[b.stoneIdx];
+    const stoneReady = img.complete && img.naturalWidth;
+
+    g.save();
+    g.beginPath();
+    g.rect(b.x, b.y, b.w, b.h);
+    g.clip();
+
+    if (stoneReady) {
+      g.drawImage(img, b.x, b.y, b.w, b.h);
+      g.globalCompositeOperation = 'multiply';
+      g.fillStyle = b.color;
+      g.fillRect(b.x, b.y, b.w, b.h);
+      g.globalCompositeOperation = 'source-over';
+    } else {
+      g.fillStyle = b.color;
+      g.fillRect(b.x, b.y, b.w, b.h);
+    }
+
+    // Highlights
+    g.fillStyle = 'rgba(255,255,255,0.30)';
     g.fillRect(b.x, b.y, b.w, 4);
-    g.fillStyle = 'rgba(0,0,0,0.32)';
+    g.fillStyle = 'rgba(0,0,0,0.28)';
     g.fillRect(b.x, b.y + b.h - 4, b.w, 4);
-    g.strokeStyle = 'rgba(0,0,0,0.42)';
+
+    g.restore();
+
+    g.strokeStyle = 'rgba(0,0,0,0.45)';
     g.lineWidth = 1;
     g.strokeRect(b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1);
 
@@ -894,7 +1143,6 @@ function drawBricks() {
       g.textAlign = 'center';
       g.fillText(PU_LABELS[b.pu], b.x + b.w / 2, b.y + b.h / 2 + 3);
     }
-
   }
 }
 
@@ -923,22 +1171,19 @@ function drawPowerUps() {
 }
 
 function drawPaddle() {
-  const isWide    = wideTimer > 0 || widePauseTimer > 0 || wideShrinkTimer > 0;
-  const flashAmt  = pad.flash > 0 ? Math.min(1, pad.flash / 10) : 0;
+  updatePadDimensions();
+  const flashAmt = pad.flash > 0 ? Math.min(1, pad.flash / 10) : 0;
 
-  g.fillStyle = isWide ? '#1a6fa3' : '#7eb8d4';
-  g.fillRect(pad.x, pad.y, pad.w, pad.h);
-  g.fillStyle = isWide ? '#4ca3d4' : '#c8e6f5';
-  g.fillRect(pad.x, pad.y, 3, pad.h);
-  g.fillStyle = isWide ? '#0f3d5c' : '#2c4a6e';
-  g.fillRect(pad.x + pad.w - 3, pad.y, 3, pad.h);
-  g.fillStyle = isWide ? '#4ca3d4' : '#c8e6f5';
-  g.fillRect(pad.x, pad.y, pad.w, 3);
-  g.fillStyle = isWide ? '#0f3d5c' : '#2c4a6e';
-  g.fillRect(pad.x, pad.y + pad.h - 3, pad.w, 3);
+  if (padImg.complete && padImg.naturalWidth) {
+    g.drawImage(padImg, pad.x, pad.y, pad.w, pad.h);
+  } else {
+    // Fallback wenn Bild noch nicht geladen
+    g.fillStyle = '#7eb8d4';
+    g.fillRect(pad.x, pad.y, pad.w, pad.h);
+  }
 
   if (flashAmt > 0) {
-    g.fillStyle = `rgba(255,255,255,${(flashAmt * 0.75).toFixed(2)})`;
+    g.fillStyle = `rgba(255,255,255,${(flashAmt * 0.65).toFixed(2)})`;
     g.fillRect(pad.x, pad.y, pad.w, pad.h);
   }
 }
@@ -1105,6 +1350,7 @@ function loop(ts) {
 resize();
 genLevel(1);
 snapBall();
+padImg.onload = updatePadDimensions;
 requestAnimationFrame(loop);
 </script>
 </body>
