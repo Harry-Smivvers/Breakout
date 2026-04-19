@@ -76,8 +76,11 @@ const HOT_PAUSE    = 55;   // frames game freezes during fireball transformation
 const PAD_SPEED  = 6.5;
 let padBaseW = 100;             // Basisbreite, wird aus Bild-Aspekt × PAD_H_THICK gesetzt
 
-const BALL_R     = 14;
-const BASE_SPEED = 6;
+const BALL_R     = 18;
+const BASE_SPEED = 6.6;
+const PILL_W = 28, PILL_H = 54, PILL_VY = 2.2;
+const ROCKET_SPEED = 14;
+const ROCKET_EXPL_R = 5 * (BW + BGAP);
 const BOUNCE_BOOST = 0.08; // speed added per bounce, as fraction of base speed
 const TRAIL_LEN  = 14;
 const BALL_COLORS = ['#7dff8a','#f1c40f','#74b9ff','#e67e22','#a29bfe','#00cec9','#fd79a8','#55efc4'];
@@ -365,18 +368,82 @@ const snd = {
   ballPop() {
     try {
       const ctx = audio(), t = ctx.currentTime;
-      // Short descending pop
       const o = mkOsc(ctx, 'sine', 520, t);
       o.frequency.exponentialRampToValueAtTime(80, t + 0.12);
       const gn = mkEnv(ctx, 0.28, 0.002, 0.10, t);
       o.connect(gn); gn.connect(ctx.destination);
       o.start(t); o.stop(t + 0.14);
-      // Noise burst
       const nm = mkNoise(ctx, t, 0.06);
       const nf = ctx.createBiquadFilter();
       nf.type = 'bandpass'; nf.frequency.value = 900;
       const ng = mkEnv(ctx, 0.18, 0.001, 0.05, t);
       nm.connect(nf); nf.connect(ng); ng.connect(ctx.destination);
+    } catch(e) {}
+  },
+  pillCatch() {
+    try {
+      const ctx = audio(), t = ctx.currentTime;
+      [[0, 440], [0.07, 660], [0.14, 880]].forEach(([dt, freq]) => {
+        const o = mkOsc(ctx, 'sine', freq, t + dt);
+        const gn = mkEnv(ctx, 0.20, 0.005, 0.22, t + dt);
+        o.connect(gn); gn.connect(ctx.destination);
+        o.start(t + dt); o.stop(t + dt + 0.26);
+      });
+      const nm = mkNoise(ctx, t, 0.30);
+      const nf = ctx.createBiquadFilter();
+      nf.type = 'highpass'; nf.frequency.value = 1400;
+      const ng = mkEnv(ctx, 0.16, 0.01, 0.26, t);
+      nm.connect(nf); nf.connect(ng); ng.connect(ctx.destination);
+    } catch(e) {}
+  },
+  rocketLaunch() {
+    try {
+      const ctx = audio(), t = ctx.currentTime;
+      const o = mkOsc(ctx, 'sawtooth', 110, t);
+      o.frequency.exponentialRampToValueAtTime(520, t + 0.18);
+      const g1 = mkEnv(ctx, 0.38, 0.003, 0.16, t);
+      o.connect(g1); g1.connect(ctx.destination);
+      o.start(t); o.stop(t + 0.20);
+      const nm = mkNoise(ctx, t, 0.22);
+      const nf = ctx.createBiquadFilter();
+      nf.type = 'bandpass'; nf.frequency.value = 1100; nf.Q.value = 0.9;
+      const ng = mkEnv(ctx, 0.20, 0.005, 0.18, t);
+      nm.connect(nf); nf.connect(ng); ng.connect(ctx.destination);
+    } catch(e) {}
+  },
+  healthCatch() {
+    try {
+      const ctx = audio(), t = ctx.currentTime;
+      [[0, 523], [0.10, 659], [0.20, 784], [0.30, 1047]].forEach(([dt, freq]) => {
+        const o = mkOsc(ctx, 'sine', freq, t + dt);
+        const gn = mkEnv(ctx, 0.22, 0.005, 0.18, t + dt);
+        o.connect(gn); gn.connect(ctx.destination);
+        o.start(t + dt); o.stop(t + dt + 0.22);
+      });
+      const o2 = mkOsc(ctx, 'triangle', 1047, t + 0.30);
+      const g2 = mkEnv(ctx, 0.15, 0.005, 0.35, t + 0.30);
+      o2.connect(g2); g2.connect(ctx.destination);
+      o2.start(t + 0.30); o2.stop(t + 0.68);
+    } catch(e) {}
+  },
+  rocketExplode() {
+    try {
+      const ctx = audio(), t = ctx.currentTime;
+      const o = mkOsc(ctx, 'sine', 55, t);
+      o.frequency.exponentialRampToValueAtTime(18, t + 0.70);
+      const g1 = mkEnv(ctx, 1.0, 0.001, 0.65, t);
+      o.connect(g1); g1.connect(ctx.destination);
+      o.start(t); o.stop(t + 0.75);
+      const nm = mkNoise(ctx, t, 0.70);
+      const nf = ctx.createBiquadFilter();
+      nf.type = 'lowpass'; nf.frequency.value = 4000;
+      const ng = mkEnv(ctx, 0.80, 0.001, 0.62, t);
+      nm.connect(nf); nf.connect(ng); ng.connect(ctx.destination);
+      const o2 = mkOsc(ctx, 'square', 200, t);
+      o2.frequency.exponentialRampToValueAtTime(35, t + 0.15);
+      const g2 = mkEnv(ctx, 0.50, 0.001, 0.13, t);
+      o2.connect(g2); g2.connect(ctx.destination);
+      o2.start(t); o2.stop(t + 0.17);
     } catch(e) {}
   }
 };
@@ -488,6 +555,13 @@ let padHoldTimer = 0;
 let ballColorIdx = 0;
 
 let bricks = [];
+let pill = null;
+let pillSpawned = false;
+let hasRocket = false;
+let rocket = null;
+let rocketExplAnim = null;
+let healthPill = null;
+let healthAnim = [];
 
 // ─── Particles ─────────────────────────────────────────────────────────────
 function spawnExplosion(x, y, color) {
@@ -506,10 +580,27 @@ function spawnExplosion(x, y, color) {
   }
 }
 
+function spawnBigExplosion(x, y) {
+  for (let i = 0; i < 80; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const spd = 1.5 + Math.random() * 12;
+    const colors = ['#ff6b35', '#f1c40f', '#ffffff', '#e74c3c', '#ff9f43', '#fd79a8'];
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * spd,
+      vy: Math.sin(angle) * spd - 3,
+      life: 1,
+      decay: 0.007 + Math.random() * 0.011,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      size: 5 + Math.random() * 14
+    });
+  }
+}
+
 // ─── Power-ups ─────────────────────────────────────────────────────────────
 const PU_TYPES  = ['multiball', 'wide', 'fireball', 'wall'];
-const PU_COLORS = { multiball: '#f1c40f', wide: '#3498db', fireball: '#ff6b35', wall: '#00cec9' };
-const PU_LABELS = { multiball: 'Ball', wide: 'BIG', fireball: 'HOT', wall: 'Wall' };
+const PU_COLORS = { multiball: '#f1c40f', wide: '#3498db', fireball: '#ff6b35', wall: '#00cec9', health: '#2ecc71' };
+const PU_LABELS = { multiball: 'Ball', wide: 'BIG', fireball: 'HOT', wall: 'Wall', health: '€' };
 
 function trySpawnPowerUp(x, y) {
   if (Math.random() < 0.25) {
@@ -527,9 +618,7 @@ function activatePowerUp(type) {
     snd.grow();
   } else if (type === 'wall') {
     const wasActive = wallPowerTimer > 0 || wallAnimIn > 0 || wallAnimOut > 0;
-    wallPowerTimer = 600;
-    wallAnimOut = 0;
-    if (!wasActive) wallAnimIn = WALL_ANIM;
+    if (!wasActive) { wallPowerTimer = 300; wallAnimOut = 0; wallAnimIn = WALL_ANIM; }
   } else if (type === 'fireball') {
     for (const b of balls) b.fire = 180;
   } else if (type === 'multiball') {
@@ -553,7 +642,7 @@ function genLevel(lvl) {
   const stepX = BW + BGAP;
   const stepY = BH + BGAP;
   const ax  = FL + 6,                           ay  = FT + 8;
-  const ax2 = FR - 6,                           ay2 = FT + 8 + 12 * (BH + BGAP);
+  const ax2 = FR - 6,                           ay2 = FT + 8 + 10 * (BH + BGAP);
 
   const cols   = Math.floor((ax2 - ax) / stepX);
   const rows   = Math.floor((ay2 - ay) / stepY);
@@ -602,6 +691,11 @@ function genLevel(lvl) {
       });
     }
   }
+  // Exactly one health brick per level — replace a random alive brick's pu
+  if (bricks.length > 0) {
+    const idx = Math.floor(Math.random() * bricks.length);
+    bricks[idx].pu = 'health';
+  }
 }
 
 // ─── Ball Helpers ──────────────────────────────────────────────────────────
@@ -630,6 +724,8 @@ function restart() {
   stateBeforePause = null; bottomWall = false;
   wideTimer = 0; widePauseTimer = 0; wideShrinkTimer = 0;
   wallPowerTimer = 0; wallAnimIn = 0; wallAnimOut = 0;
+  pill = null; pillSpawned = false; hasRocket = false; rocket = null; rocketExplAnim = null;
+  healthPill = null; healthAnim = [];
 
   pad.x = (FL + FR) / 2 - padBaseW / 2;
   pad.w = padBaseW; pad.h = PAD_H_THICK; pad.flash = 0; updatePadDimensions();
@@ -655,6 +751,13 @@ function boostBall(b) {
   b.vx = b.vx / sp * ns; b.vy = b.vy / sp * ns;
 }
 
+function launchRocket() {
+  if (!hasRocket || rocket) return;
+  rocket = { x: pad.x + pad.w / 2, y: pad.y - 5 };
+  hasRocket = false;
+  snd.rocketLaunch();
+}
+
 function togglePause() {
   if (state === 'PLAYING') {
     stateBeforePause = 'PLAYING';
@@ -671,8 +774,9 @@ document.addEventListener('keydown', e => {
   keys[e.code] = true;
   if (e.code === 'ArrowUp' || e.code === 'Enter') {
     e.preventDefault();
-    if (state === 'READY')     launch();
-    if (state === 'GAME_OVER') restart();
+    if (hasRocket)             launchRocket();
+    else if (state === 'READY')     launch();
+    else if (state === 'GAME_OVER') restart();
   }
   if (e.code === 'Space')  { e.preventDefault(); togglePause(); }
   if (e.code === 'KeyW')   bottomWall = !bottomWall;
@@ -704,6 +808,7 @@ setupPadBtn(document.getElementById('bLeft'),  'left');
 setupPadBtn(document.getElementById('bRight'), 'right');
 
 function hitAction() {
+  if (hasRocket)             { launchRocket(); return; }
   if (state === 'READY')     launch();
   if (state === 'GAME_OVER') restart();
 }
@@ -746,8 +851,9 @@ canvas.addEventListener('touchmove', ev => {
 canvas.addEventListener('touchend', ev => {
   ev.preventDefault();
   if (!tMoved && Date.now() - tTime < 300) {
-    if (state === 'READY')     launch();
-    if (state === 'GAME_OVER') restart();
+    if (hasRocket)             launchRocket();
+    else if (state === 'READY')     launch();
+    else if (state === 'GAME_OVER') restart();
   }
 }, { passive: false });
 
@@ -767,6 +873,8 @@ function tickState() {
         speedMult = Math.min(1 + (level - 1) * 0.12, 1.8);
         wideTimer = 0; widePauseTimer = 0; wideShrinkTimer = 0;
         wallPowerTimer = 0; wallAnimIn = 0; wallAnimOut = 0;
+        pill = null; pillSpawned = false; hasRocket = false; rocket = null; rocketExplAnim = null;
+        healthPill = null; healthAnim = [];
         pad.w = padBaseW; updatePadDimensions();
         for (const b of balls) b.fire = 0;
         genLevel(level); snapBall(); state = 'READY';
@@ -872,6 +980,117 @@ function update(dt) {
     }
   }
 
+  // Health pill physics
+  if (healthPill) {
+    healthPill.y += healthPill.vy * dt;
+    if (healthPill.x + healthPill.w > pad.x && healthPill.x < pad.x + pad.w &&
+        healthPill.y + healthPill.w > pad.y && healthPill.y < pad.y + pad.h) {
+      lives++;
+      snd.healthCatch();
+      for (let i = 0; i < 40; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const spd = 1 + Math.random() * 5;
+        healthAnim.push({
+          x: healthPill.x + healthPill.w / 2, y: pad.y,
+          vx: Math.cos(angle) * spd, vy: Math.sin(angle) * spd - 4,
+          life: 1, decay: 0.018 + Math.random() * 0.015,
+          color: ['#2ecc71','#f1c40f','#ffffff','#ff6b81'][Math.floor(Math.random()*4)],
+          size: 4 + Math.random() * 6, text: Math.random() < 0.3
+        });
+      }
+      healthPill = null;
+    } else if (healthPill.y > CH + 20) {
+      healthPill = null;
+    }
+  }
+  // Health anim particles
+  for (let i = healthAnim.length - 1; i >= 0; i--) {
+    const p = healthAnim[i];
+    p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 0.06 * dt;
+    p.life -= p.decay * dt;
+    if (p.life <= 0) healthAnim.splice(i, 1);
+  }
+
+  // Pill spawning (when ≤3 bricks remain)
+  if (state === 'PLAYING' && !pillSpawned && !hasRocket && !rocket && !pill) {
+    const alive = bricks.filter(b => b.alive).length;
+    if (alive > 0 && alive <= 3) {
+      pill = { x: FL + Math.random() * (FR - FL - PILL_W), y: FT - PILL_H };
+      pillSpawned = true;
+    }
+  }
+  // Pill physics
+  if (pill) {
+    pill.y += PILL_VY * dt;
+    if (pill.x + PILL_W > pad.x && pill.x < pad.x + pad.w &&
+        pill.y + PILL_H > pad.y && pill.y < pad.y + pad.h) {
+      for (const b of balls) { spawnExplosion(b.x, b.y, '#ffffff'); snd.ballPop(); }
+      balls = [];
+      hasRocket = true;
+      snd.pillCatch();
+      pill = null;
+    } else if (pill.y > CH + 20) {
+      pill = null;
+    }
+  }
+  // Rocket explosion ring animation
+  if (rocketExplAnim) {
+    rocketExplAnim.timer -= dt;
+    if (rocketExplAnim.timer <= 0) rocketExplAnim = null;
+  }
+  // Rocket in flight
+  if (rocket && state === 'PLAYING') {
+    rocket.y -= ROCKET_SPEED * dt;
+    if (rocket.y < FT + WALL) {
+      const ex = rocket.x, ey = FT + WALL;
+      spawnExplosion(ex, ey, '#74b9ff');
+      rocketExplAnim = { x: ex, y: ey, timer: 30, maxR: 55 };
+      snd.rocketExplode();
+      shakeFrames = 20; shakeMag = 10;
+      const nb = makeBall();
+      nb.x = ex; nb.y = ey + BALL_R + 2;
+      const angle = (Math.random() * 80 - 40) * Math.PI / 180;
+      const sp = BASE_SPEED * speedMult * userSpeed;
+      nb.vx = Math.sin(angle) * sp; nb.vy = Math.cos(angle) * sp;
+      balls.push(nb);
+      rocket = null;
+    }
+    else {
+      for (const brick of bricks) {
+        if (!brick.alive) continue;
+        if (rocket.x > brick.x - 4 && rocket.x < brick.x + brick.w + 4 &&
+            rocket.y > brick.y - 4 && rocket.y < brick.y + brick.h + 4) {
+          const ex = brick.x + brick.w / 2, ey = brick.y + brick.h / 2;
+          spawnBigExplosion(ex, ey);
+          rocketExplAnim = { x: ex, y: ey, timer: 40, maxR: 100 };
+          snd.rocketExplode();
+          shakeFrames = 50; shakeMag = 24;
+          for (const b2 of bricks) {
+            if (!b2.alive) continue;
+            const cx = b2.x + b2.w / 2, cy = b2.y + b2.h / 2;
+            if (Math.hypot(cx - ex, cy - ey) <= ROCKET_EXPL_R) {
+              b2.alive = false; score += 10;
+              spawnExplosion(cx, cy, b2.color);
+            }
+          }
+          rocket = null;
+          if (bricks.every(b => !b.alive)) {
+            state = 'LEVEL_COMPLETE'; stateTimer = 130;
+            powerUps = []; pill = null; snd.levelComplete();
+          } else {
+            const nb = makeBall();
+            nb.x = ex; nb.y = ey;
+            const angle = (Math.random() * 80 - 40) * Math.PI / 180;
+            const sp = BASE_SPEED * speedMult * userSpeed;
+            nb.vx = Math.sin(angle) * sp; nb.vy = -Math.cos(angle) * sp;
+            balls.push(nb);
+          }
+          break;
+        }
+      }
+    }
+  }
+
   if (state === 'READY') {
     if (balls.length === 0) balls = [makeBall()];
     const b = balls[0];
@@ -894,7 +1113,7 @@ function update(dt) {
     b.x += b.vx * dt;
     b.y += b.vy * dt;
 
-    // Decelerate toward base speed; only applies when above it
+    // Decelerate toward base speed; never drops below it
     { const sp = Math.hypot(b.vx, b.vy);
       const baseSp = BASE_SPEED * speedMult * userSpeed;
       if (sp > baseSp) { const f = Math.max(Math.pow(0.997, dt), baseSp / sp); b.vx *= f; b.vy *= f; } }
@@ -918,6 +1137,8 @@ function update(dt) {
           lives--;
           shakeFrames = 28; shakeMag = 9;
           wideTimer = 0; widePauseTimer = 0; wideShrinkTimer = 0;
+          pill = null; pillSpawned = false; hasRocket = false; rocket = null; rocketExplAnim = null;
+          healthPill = null; healthAnim = [];
           pad.w = padBaseW; updatePadDimensions();
           balls.forEach(b => { b.fire = 0; b.transform = 0; });
           if (lives < 0) { state = 'GAME_OVER'; }
@@ -983,10 +1204,10 @@ function update(dt) {
           break; // exit brick loop (outer ball loop exits via hotTriggered)
         } else if (brick.pu === 'wall') {
           const wasActive = wallPowerTimer > 0 || wallAnimIn > 0 || wallAnimOut > 0;
-          wallPowerTimer = 600;
-          wallAnimOut = 0;
-          if (!wasActive) wallAnimIn = WALL_ANIM;
-          snd.wallAppear();
+          if (!wasActive) { wallPowerTimer = 300; wallAnimOut = 0; wallAnimIn = WALL_ANIM; snd.wallAppear(); }
+        } else if (brick.pu === 'health' && !healthPill) {
+          const coinD = 32;
+          healthPill = { x: brick.x + brick.w / 2 - coinD / 2, y: brick.y + brick.h, w: coinD, vy: 2.0 };
         }
         // Fireball: pass through without reflecting
         if (b.fire > 0) continue;
@@ -1029,8 +1250,14 @@ function draw(dt) {
   drawWalls();
   drawBricks();
   drawParticles();
+  drawRocketExplAnim();
   drawPowerUps();
+  drawPill();
+  drawHealthPill();
+  drawHealthAnim();
   drawPaddle();
+  drawRocketOnPad();
+  drawRocketInFlight();
   drawBalls();
   drawHUD();
   drawOverlays();
@@ -1050,6 +1277,151 @@ function drawStars(dt) {
     g.arc(s.x, s.y, s.r, 0, Math.PI * 2);
     g.fillStyle = `rgba(200,215,255,${(b * 0.65).toFixed(2)})`;
     g.fill();
+  }
+}
+
+function drawPill() {
+  if (!pill) return;
+  const cx = pill.x + PILL_W / 2;
+  const cy = pill.y + PILL_H / 2;
+  const rx = PILL_W / 2, ry = PILL_H / 2;
+  const pulse = 0.5 + 0.5 * Math.sin(frameCount * 0.12);
+  g.save();
+  g.shadowColor = `rgba(100,180,255,${(0.4 + 0.4 * pulse).toFixed(2)})`;
+  g.shadowBlur  = 14 + pulse * 10;
+  const gr = g.createRadialGradient(cx - rx * 0.2, cy - ry * 0.25, 2, cx, cy, Math.max(rx, ry));
+  gr.addColorStop(0,    '#ffffff');
+  gr.addColorStop(0.35, `rgba(${Math.floor(100 + pulse * 60)},${Math.floor(160 + pulse * 60)},255,1)`);
+  gr.addColorStop(1,    '#1a3a8a');
+  g.beginPath();
+  g.moveTo(cx, cy - ry); g.lineTo(cx + rx, cy);
+  g.lineTo(cx, cy + ry); g.lineTo(cx - rx, cy);
+  g.closePath();
+  g.fillStyle = gr; g.fill();
+  g.shadowBlur = 0;
+  g.beginPath();
+  g.moveTo(cx - rx * 0.15, cy - ry * 0.55); g.lineTo(cx + rx * 0.25, cy - ry * 0.55);
+  g.lineTo(cx + rx * 0.10, cy - ry * 0.15); g.lineTo(cx - rx * 0.30, cy - ry * 0.15);
+  g.closePath();
+  g.fillStyle = `rgba(255,255,255,${(0.45 + 0.25 * pulse).toFixed(2)})`; g.fill();
+  g.beginPath();
+  g.moveTo(cx, cy - ry); g.lineTo(cx + rx, cy);
+  g.lineTo(cx, cy + ry); g.lineTo(cx - rx, cy);
+  g.closePath();
+  g.strokeStyle = `rgba(180,220,255,${(0.6 + 0.3 * pulse).toFixed(2)})`;
+  g.lineWidth = 1.5; g.stroke();
+  g.restore();
+}
+
+function drawHealthPill() {
+  if (!healthPill) return;
+  const cx = healthPill.x + healthPill.w / 2;
+  const cy = healthPill.y + healthPill.w / 2;
+  const r  = healthPill.w / 2;
+  const pulse = 0.5 + 0.5 * Math.sin(frameCount * 0.13);
+  g.save();
+  g.shadowColor = `rgba(255,200,0,${(0.5 + 0.4 * pulse).toFixed(2)})`;
+  g.shadowBlur  = 12 + pulse * 10;
+  const gr = g.createRadialGradient(cx - r * 0.3, cy - r * 0.3, 1, cx, cy, r);
+  gr.addColorStop(0,    '#fff7a0');
+  gr.addColorStop(0.25, '#f1c40f');
+  gr.addColorStop(0.7,  '#d4a017');
+  gr.addColorStop(1,    '#8a6000');
+  g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2);
+  g.fillStyle = gr; g.fill();
+  g.shadowBlur = 0;
+  g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2);
+  g.strokeStyle = 'rgba(180,120,0,0.85)'; g.lineWidth = 2; g.stroke();
+  g.beginPath(); g.arc(cx, cy, r * 0.68, 0, Math.PI * 2);
+  g.strokeStyle = 'rgba(180,120,0,0.5)'; g.lineWidth = 1; g.stroke();
+  g.fillStyle = `rgba(130,80,0,${(0.8 + 0.2 * pulse).toFixed(2)})`;
+  g.font = `bold ${Math.round(r * 1.1)}px monospace`;
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText('€', cx, cy + 1);
+  g.beginPath();
+  g.ellipse(cx - r * 0.28, cy - r * 0.32, r * 0.22, r * 0.13, -0.5, 0, Math.PI * 2);
+  g.fillStyle = `rgba(255,255,220,${(0.55 + 0.3 * pulse).toFixed(2)})`; g.fill();
+  g.restore();
+}
+
+function drawHealthAnim() {
+  for (const p of healthAnim) {
+    g.save();
+    g.globalAlpha = Math.max(0, p.life);
+    if (p.text) {
+      g.fillStyle = '#2ecc71';
+      g.font = `bold ${Math.round(p.size * 2)}px monospace`;
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText('+1♥', p.x, p.y);
+    } else {
+      g.fillStyle = p.color;
+      g.beginPath();
+      g.arc(p.x, p.y, Math.max(0.5, p.size * p.life), 0, Math.PI * 2);
+      g.fill();
+    }
+    g.restore();
+  }
+}
+
+function drawRocketOnPad() {
+  if (!hasRocket) return;
+  drawRocketShape(pad.x + pad.w / 2, pad.y - 32, false);
+}
+
+function drawRocketInFlight() {
+  if (!rocket) return;
+  drawRocketShape(rocket.x, rocket.y, true);
+}
+
+function drawRocketShape(x, y, inFlight) {
+  g.save();
+  g.translate(x, y);
+  // Body
+  g.fillStyle = '#c0392b';
+  g.fillRect(-7, -18, 14, 28);
+  // Nose cone
+  g.beginPath(); g.moveTo(-7, -18); g.lineTo(7, -18); g.lineTo(0, -34); g.closePath();
+  g.fillStyle = '#e74c3c'; g.fill();
+  // Fins
+  g.fillStyle = '#7f8c8d';
+  g.beginPath(); g.moveTo(-7, 6); g.lineTo(-16, 18); g.lineTo(-7, 18); g.closePath(); g.fill();
+  g.beginPath(); g.moveTo(7, 6);  g.lineTo(16, 18);  g.lineTo(7, 18);  g.closePath(); g.fill();
+  // Window
+  g.beginPath(); g.arc(0, -8, 5, 0, Math.PI * 2);
+  g.fillStyle = '#74b9ff'; g.fill();
+  g.strokeStyle = '#2980b9'; g.lineWidth = 1.5; g.stroke();
+  // Exhaust flame
+  if (inFlight) {
+    const fl = 0.5 + 0.5 * Math.sin(frameCount * 0.5);
+    g.beginPath();
+    g.moveTo(-5, 10); g.lineTo(5, 10); g.lineTo(0, 20 + fl * 14); g.closePath();
+    g.fillStyle = `rgba(255,${Math.floor(140 + fl * 100)},0,0.92)`; g.fill();
+    g.beginPath();
+    g.moveTo(-3, 10); g.lineTo(3, 10); g.lineTo(0, 14 + fl * 8); g.closePath();
+    g.fillStyle = '#ffffff'; g.fill();
+  }
+  g.restore();
+}
+
+function drawRocketExplAnim() {
+  if (!rocketExplAnim) return;
+  const { x, y, timer, maxR } = rocketExplAnim;
+  const prog = 1 - timer / 40;
+  for (let i = 0; i < 3; i++) {
+    const rp = ((prog * 2 + i * 0.4) % 1);
+    const radius = rp * maxR;
+    const alpha = (1 - rp) * 0.8;
+    g.beginPath();
+    g.arc(x, y, radius, 0, Math.PI * 2);
+    g.strokeStyle = `rgba(255,${Math.floor(200 - rp * 150)},0,${alpha.toFixed(2)})`;
+    g.lineWidth = 4 - rp * 3;
+    g.stroke();
+  }
+  // Central flash
+  if (prog < 0.35) {
+    const flashAlpha = (1 - prog / 0.35) * 0.9;
+    g.beginPath(); g.arc(x, y, maxR * 0.5 * (prog / 0.35), 0, Math.PI * 2);
+    g.fillStyle = `rgba(255,255,200,${flashAlpha.toFixed(2)})`; g.fill();
   }
 }
 
@@ -1353,6 +1725,13 @@ function drawOverlays() {
   const mx = (FL + FR) / 2;
   const my = (FT + FB) / 2;
 
+  if (hasRocket) {
+    const pulse = 0.7 + 0.3 * Math.sin(frameCount * 0.15);
+    g.fillStyle = `rgba(255,${Math.floor(120 + pulse * 80)},0,${pulse.toFixed(2)})`;
+    g.font = 'bold 15px monospace';
+    g.textAlign = 'center';
+    g.fillText('\u2191 \u00B7 HIT \u00B7 Tap = Fire Rocket!', mx, FB - PAD_H_THICK - BALL_R * 3);
+  }
   if (state === 'READY') {
     g.fillStyle = 'rgba(255,255,255,0.35)';
     g.font = '13px monospace';
