@@ -20,8 +20,11 @@
     canvas { display: block; }
     #btns {
       display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
       gap: 12px;
-      margin-top: 10px;
+      margin-top: 8px;
+      width: 100%;
     }
     .btn {
       background: #0f0f2a;
@@ -63,18 +66,20 @@ const FR = CW;
 const FT = HUD_H + WALL;
 const FB = CH - WALL;
 
+const WALL_R        = WALL * 2; // thickness of right power-up wall
 const PAD_W        = 14;
 const PAD_H_BASE   = 82;
 const PAD_H_BIG    = Math.min(Math.round(PAD_H_BASE * 1.85), 220);
 const WIDE_PAUSE   = 50;   // frames game freezes while paddle grows
 const WIDE_SHRINK  = 70;   // frames shrink animation
 const HOT_PAUSE    = 55;   // frames game freezes during fireball transformation
-const PAD_X        = CW - WALL - 3 - PAD_W;
-const PAD_RIGHT    = CW - WALL - 3;
+const PAD_X        = CW - WALL_R - 3 - PAD_W;
+const PAD_RIGHT    = CW - WALL_R - 3;
 const PAD_SPEED  = 6.5;
 
 const BALL_R     = 14;
-const BASE_SPEED = 5.2;
+const BASE_SPEED = 6;
+const BOUNCE_BOOST = 0.08; // speed added per bounce, as fraction of base speed
 const TRAIL_LEN  = 14;
 const BALL_COLORS = ['#7dff8a','#f1c40f','#74b9ff','#e67e22','#a29bfe','#00cec9','#fd79a8','#55efc4'];
 
@@ -395,11 +400,27 @@ canvas.width = CW; canvas.height = CH;
 let scale = 1;
 
 function resize() {
+  const W = window.innerWidth;
+  const H = window.innerHeight;
   const btns = document.getElementById('btns');
-  const bh = btns.offsetHeight + 18;
-  scale = Math.min(window.innerWidth / CW, (window.innerHeight - bh) / CH) * 0.97;
-  canvas.style.width  = (CW * scale) + 'px';
-  canvas.style.height = (CH * scale) + 'px';
+
+  // Scale buttons so they don't crowd out the canvas
+  const targetBtnH = Math.max(36, Math.min(68, H * 0.11));
+  const fs  = Math.max(11, Math.min(22, Math.round(targetBtnH * 0.40)));
+  const pv  = Math.max(4,  Math.round(fs * 0.32));
+  const ph  = Math.max(8,  Math.round(fs * 0.95));
+  const gap = Math.max(4,  Math.round(fs * 0.45));
+  btns.style.gap = gap + 'px';
+  document.querySelectorAll('.btn').forEach(b => {
+    b.style.fontSize = fs + 'px';
+    b.style.padding  = pv + 'px ' + ph + 'px';
+  });
+
+  // Read actual button height after reflow
+  const bh = btns.offsetHeight + 10;
+  scale = Math.min(W / CW, (H - bh) / CH) * 0.98;
+  canvas.style.width  = Math.round(CW * scale) + 'px';
+  canvas.style.height = Math.round(CH * scale) + 'px';
 }
 window.addEventListener('resize', resize);
 
@@ -500,6 +521,11 @@ function activatePowerUp(type) {
     widePauseTimer = WIDE_PAUSE;
     wideShrinkTimer = 0;
     snd.grow();
+  } else if (type === 'wall') {
+    const wasActive = wallPowerTimer > 0 || wallAnimIn > 0 || wallAnimOut > 0;
+    wallPowerTimer = 600;
+    wallAnimOut = 0;
+    if (!wasActive) wallAnimIn = WALL_ANIM;
   } else if (type === 'fireball') {
     for (const b of balls) b.fire = 180;
   } else if (type === 'multiball') {
@@ -615,6 +641,14 @@ function changeSpeed(factor) {
   if (userSpeed === prev) return;
   const ratio = userSpeed / prev;
   for (const b of balls) { b.vx *= ratio; b.vy *= ratio; }
+}
+
+function boostBall(b) {
+  const sp = Math.hypot(b.vx, b.vy);
+  if (sp === 0) return;
+  const baseSp = BASE_SPEED * speedMult * userSpeed;
+  const ns = Math.min(sp + baseSp * BOUNCE_BOOST, baseSp * 2.5);
+  b.vx = b.vx / sp * ns; b.vy = b.vy / sp * ns;
 }
 
 function togglePause() {
@@ -741,8 +775,10 @@ function tickState() {
 function update(dt) {
   // Paddle movement with hold-acceleration
   let pdy = 0;
+  if (state !== 'PAUSED') {
   if (keys['ArrowUp']   || btnState.up)                  pdy -= 1;
   if (keys['ArrowDown'] || keys['KeyS'] || btnState.down) pdy += 1;
+  }
   if (pdy !== 0) {
     padHoldTimer += dt;
   } else {
@@ -781,25 +817,27 @@ function update(dt) {
     updatePadDimensions();
     pad.y = clamp(pad.y, FT, FB - pad.h);
   }
-  // Wall power-up timer
-  if (wallAnimIn > 0)  wallAnimIn  -= dt;
-  if (wallAnimOut > 0) {
-    wallAnimOut -= dt;
-    if (wallAnimOut <= 0) wallPowerTimer = 0;
-  }
-  if (wallPowerTimer > 0) {
-    wallPowerTimer -= dt;
-    if (wallPowerTimer <= 0 && wallAnimOut === 0) {
-      wallAnimOut = WALL_ANIM;
-      snd.wallDisappear();
+  // Wall power-up timer + per-ball timers: eingefroren während Pause
+  if (state !== 'PAUSED') {
+    if (wallAnimIn > 0)  wallAnimIn  -= dt;
+    if (wallAnimOut > 0) {
+      wallAnimOut -= dt;
+      if (wallAnimOut <= 0) wallPowerTimer = 0;
     }
-  }
-  for (const b of balls) {
-    if (b.transform > 0) {
-      b.transform -= dt;
-      if (b.transform <= 0) b.fire = 180;
+    if (wallPowerTimer > 0) {
+      wallPowerTimer -= dt;
+      if (wallPowerTimer <= 0 && wallAnimOut === 0) {
+        wallAnimOut = WALL_ANIM;
+        snd.wallDisappear();
+      }
     }
-    if (b.fire > 0) b.fire -= dt;
+    for (const b of balls) {
+      if (b.transform > 0) {
+        b.transform -= dt;
+        if (b.transform <= 0) b.fire = 180;
+      }
+      if (b.fire > 0) b.fire -= dt;
+    }
   }
   if (shakeFrames > 0) shakeFrames -= dt;
 
@@ -847,16 +885,22 @@ function update(dt) {
     b.x += b.vx * dt;
     b.y += b.vy * dt;
 
+    // Decelerate toward base speed; only applies when above it
+    { const sp = Math.hypot(b.vx, b.vy);
+      const baseSp = BASE_SPEED * speedMult * userSpeed;
+      if (sp > baseSp) { const f = Math.max(Math.pow(0.997, dt), baseSp / sp); b.vx *= f; b.vy *= f; } }
+
     // Wall collisions
-    if (b.y - b.r < FT) { b.y = FT + b.r; b.vy =  Math.abs(b.vy); snd.wall(); }
-    if (b.y + b.r > FB) { b.y = FB - b.r; b.vy = -Math.abs(b.vy); snd.wall(); }
-    if (b.x - b.r < FL) { b.x = FL + b.r; b.vx =  Math.abs(b.vx); snd.wall(); }
+    if (b.y - b.r < FT) { b.y = FT + b.r; b.vy =  Math.abs(b.vy); snd.wall(); boostBall(b); }
+    if (b.y + b.r > FB) { b.y = FB - b.r; b.vy = -Math.abs(b.vy); snd.wall(); boostBall(b); }
+    if (b.x - b.r < FL) { b.x = FL + b.r; b.vx =  Math.abs(b.vx); snd.wall(); boostBall(b); }
 
     // Right side: wall or exit
     const walled = rightWall || wallPowerTimer > 0 || wallAnimOut > 0;
     if (walled) {
-      if (b.x + b.r > CW - WALL) {
-        b.x = CW - WALL - b.r; b.vx = -Math.abs(b.vx); snd.wall();
+      const wallEdge = (wallPowerTimer > 0 || wallAnimOut > 0) ? CW - WALL_R : CW - WALL;
+      if (b.x + b.r > wallEdge) {
+        b.x = wallEdge - b.r; b.vx = -Math.abs(b.vx); snd.wall(); boostBall(b);
       }
     } else {
       if (b.x - b.r > FR + 30) {
@@ -865,6 +909,9 @@ function update(dt) {
           snd.lost();
           lives--;
           shakeFrames = 28; shakeMag = 9;
+          wideTimer = 0; widePauseTimer = 0; wideShrinkTimer = 0;
+          pad.h = PAD_H_BASE; updatePadDimensions();
+          balls.forEach(b => { b.fire = 0; b.transform = 0; });
           if (lives < 0) { state = 'GAME_OVER'; }
           else           { state = 'BALL_LOST'; stateTimer = 100; }
         }
@@ -883,6 +930,7 @@ function update(dt) {
       const sp    = Math.hypot(b.vx, b.vy);
       b.vx = -Math.cos(angle) * sp;
       b.vy =  Math.sin(angle) * sp;
+      boostBall(b);
       b.x  = pad.x - b.r - 1;
       snd.paddle();
       pad.flash = 14;
@@ -926,9 +974,10 @@ function update(dt) {
           snd.fireStart();
           break; // exit brick loop (outer ball loop exits via hotTriggered)
         } else if (brick.pu === 'wall') {
-          wallPowerTimer = 600; // 10 Sekunden
-          wallAnimIn  = WALL_ANIM;
+          const wasActive = wallPowerTimer > 0 || wallAnimIn > 0 || wallAnimOut > 0;
+          wallPowerTimer = 600;
           wallAnimOut = 0;
+          if (!wasActive) wallAnimIn = WALL_ANIM;
           snd.wallAppear();
         }
         // Fireball: pass through without reflecting
@@ -939,6 +988,7 @@ function update(dt) {
         const oB = (brick.y + brick.h) - (b.y - b.r);
         const m  = Math.min(oL, oR, oT, oB);
         if (m === oL || m === oR) b.vx = -b.vx; else b.vy = -b.vy;
+        boostBall(b);
       }
     }
   }
@@ -1033,10 +1083,11 @@ function drawHUD() {
     g.fillText('HOT ' + Math.ceil(maxFire / 60) + 's', px, 12);
     px += 70;
   }
-  if (userSpeed !== 1.0) {
-    g.fillStyle = userSpeed > 1 ? '#f1c40f' : '#74b9ff';
-    g.fillText('SPD ' + userSpeed.toFixed(2) + 'x', px, 12);
-  }
+  { const activeBall = balls.find(b => b.vx !== 0 || b.vy !== 0);
+    const sp = activeBall ? Math.hypot(activeBall.vx, activeBall.vy) : BASE_SPEED * speedMult * userSpeed;
+    const ratio = sp / BASE_SPEED;
+    g.fillStyle = ratio > speedMult * userSpeed + 0.05 ? '#f1c40f' : ratio < speedMult * userSpeed - 0.05 ? '#74b9ff' : '#d0d8ff';
+    g.fillText('SPD ' + ratio.toFixed(2) + 'x', px, 12); }
 }
 
 function drawWalls() {
@@ -1052,34 +1103,37 @@ function drawWalls() {
     g.fillRect(CW - WALL, HUD_H, WALL, CH - HUD_H);
   }
   if (timedActive) {
-    let xOff = 0, alpha = 1;
+    const halfH = (CH - HUD_H) / 2;
+    // prog: 0 = unsichtbar, 1 = vollständig
+    let prog = 1, alpha = 1;
     if (wallAnimIn > 0) {
-      // Einfahren von rechts
-      const frac = wallAnimIn / WALL_ANIM;
-      xOff  = Math.round(frac * WALL * 3);
-      alpha = 1 - frac;
+      prog  = 1 - wallAnimIn / WALL_ANIM;
+      alpha = prog;
     } else if (wallAnimOut > 0) {
-      // Flackern + ausblenden
-      const frac = wallAnimOut / WALL_ANIM;
-      alpha = frac * (Math.floor(frameCount) % 5 < 3 ? 1 : 0.15);
+      prog  = wallAnimOut / WALL_ANIM;
+      alpha = prog * (Math.floor(frameCount) % 5 < 3 ? 1 : 0.15);
     }
+    const segH = prog * halfH;
+    const segs = [
+      { y: HUD_H,          h: segH },         // wächst von oben
+      { y: CH - segH,      h: segH },          // wächst von unten
+    ];
     g.save();
     g.globalAlpha = Math.max(0, Math.min(1, alpha));
-    // Basis
-    g.fillStyle = '#007f72';
-    g.fillRect(CW - WALL + xOff, HUD_H, WALL, CH - HUD_H);
-    // Heller Kern
-    g.fillStyle = '#00cec9';
-    g.fillRect(CW - WALL + 2 + xOff, HUD_H, WALL - 4, CH - HUD_H);
-    // Glüh-Highlight links
-    g.fillStyle = 'rgba(0,255,240,0.30)';
-    g.fillRect(CW - WALL + xOff, HUD_H, 3, CH - HUD_H);
-    // Glow-Aura nach links
-    const grd = g.createLinearGradient(CW - WALL - 18 + xOff, 0, CW - WALL + xOff, 0);
-    grd.addColorStop(0, 'rgba(0,206,201,0)');
-    grd.addColorStop(1, 'rgba(0,206,201,0.25)');
-    g.fillStyle = grd;
-    g.fillRect(CW - WALL - 18 + xOff, HUD_H, 18, CH - HUD_H);
+    for (const { y, h } of segs) {
+      if (h <= 0) continue;
+      g.fillStyle = '#007f72';
+      g.fillRect(CW - WALL_R, y, WALL_R, h);
+      g.fillStyle = '#00cec9';
+      g.fillRect(CW - WALL_R + 2, y, WALL_R - 4, h);
+      g.fillStyle = 'rgba(0,255,240,0.30)';
+      g.fillRect(CW - WALL_R, y, 3, h);
+      const grd = g.createLinearGradient(CW - WALL_R - 18, 0, CW - WALL_R, 0);
+      grd.addColorStop(0, 'rgba(0,206,201,0)');
+      grd.addColorStop(1, 'rgba(0,206,201,0.25)');
+      g.fillStyle = grd;
+      g.fillRect(CW - WALL_R - 18, y, 18, h);
+    }
     g.restore();
   }
 
@@ -1139,9 +1193,9 @@ function drawBricks() {
       g.fillRect(ix, iy, s, s);
       g.globalAlpha = 1;
       g.fillStyle = '#fff';
-      g.font = 'bold 7px monospace';
+      g.font = 'bold 14px monospace';
       g.textAlign = 'center';
-      g.fillText(PU_LABELS[b.pu], b.x + b.w / 2, b.y + b.h / 2 + 3);
+      g.fillText(PU_LABELS[b.pu], b.x + b.w / 2, b.y + b.h / 2 + 5);
     }
   }
 }
