@@ -422,6 +422,7 @@ function resize() {
 window.addEventListener('resize', resize);
 
 // ─── Stars ─────────────────────────────────────────────────────────────────
+const STAR_SPEED = 2.4; // px per frame (downward scroll speed)
 const stars = Array.from({length: 70}, () => ({
   x: Math.random() * CW,
   y: HUD_H + Math.random() * (CH - HUD_H),
@@ -1008,7 +1009,7 @@ function update(dt) {
 }
 
 // ─── Draw ──────────────────────────────────────────────────────────────────
-function draw() {
+function draw(dt) {
   frameCount++;
 
   // Screen shake
@@ -1024,7 +1025,7 @@ function draw() {
   g.fillStyle = '#07071a';
   g.fillRect(-20, -20, CW + 40, CH + 40);
 
-  drawStars();
+  drawStars(dt);
   drawWalls();
   drawBricks();
   drawParticles();
@@ -1037,8 +1038,13 @@ function draw() {
   g.restore();
 }
 
-function drawStars() {
+function drawStars(dt) {
   for (const s of stars) {
+    s.y += STAR_SPEED * dt;
+    if (s.y > CH) {
+      s.y = HUD_H;
+      s.x = Math.random() * CW;
+    }
     const b = 0.25 + 0.75 * (0.5 + 0.5 * Math.sin(frameCount * s.spd + s.phase));
     g.beginPath();
     g.arc(s.x, s.y, s.r, 0, Math.PI * 2);
@@ -1406,7 +1412,7 @@ function loop(ts) {
   lastTs = ts;
   tickState();
   update(dt);
-  draw();
+  draw(dt);
   requestAnimationFrame(loop);
 }
 
