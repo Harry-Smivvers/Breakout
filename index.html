@@ -316,7 +316,7 @@ const pad = {
 // Balls array (supports multiball)
 let balls = [];
 function makeBall(color = null) {
-  return { x: 0, y: 0, vx: 0, vy: 0, r: BALL_R, trail: [], color, fire: 0 };
+  return { x: 0, y: 0, vx: 0, vy: 0, r: BALL_R, trail: [], color, fire: 0, transform: 0 };
 }
 
 // Particles
@@ -327,9 +327,7 @@ let powerUps  = [];
 let wideTimer       = 0;   // frames wide paddle active
 let widePauseTimer  = 0;   // frames game frozen during growth
 let wideShrinkTimer = 0;   // frames shrink animation
-// fireTimer is now per-ball (b.fire)
-let hotPauseTimer = 0;   // frames frozen during fireball transformation
-let hotBall       = null; // ball currently transforming
+// fireTimer and transform are now per-ball (b.fire, b.transform)
 
 // Screen shake
 let shakeFrames = 0, shakeMag = 0;
@@ -471,7 +469,7 @@ function restart() {
   score = 0; level = 1; lives = 2; speedMult = 1;
   stateBeforePause = null; rightWall = false;
   wideTimer = 0; widePauseTimer = 0; wideShrinkTimer = 0;
-  hotPauseTimer = 0; hotBall = null;
+
   pad.y = (FT + FB) / 2 - PAD_H_BASE / 2;
   pad.h = PAD_H_BASE; pad.flash = 0;
   particles = []; powerUps = [];
@@ -582,7 +580,7 @@ function tickState() {
         level++;
         speedMult = Math.min(1 + (level - 1) * 0.12, 1.8);
         wideTimer = 0; widePauseTimer = 0; wideShrinkTimer = 0;
-        hotPauseTimer = 0; hotBall = null;
+      
         pad.h = PAD_H_BASE;
         for (const b of balls) b.fire = 0;
         genLevel(level); snapBall(); state = 'READY';
@@ -623,16 +621,13 @@ function update(dt) {
     pad.h = Math.round(PAD_H_BASE + (PAD_H_BIG - PAD_H_BASE) * frac);
     pad.y = clamp(pad.y, FT, FB - pad.h);
   }
-  // HOT transformation pause
-  if (hotPauseTimer > 0) {
-    hotPauseTimer -= dt;
-    if (hotPauseTimer <= 0 && hotBall) {
-      hotBall.fire = 180;
-      hotBall = null;
+  for (const b of balls) {
+    if (b.transform > 0) {
+      b.transform -= dt;
+      if (b.transform <= 0) b.fire = 180;
     }
-    return;
+    if (b.fire > 0) b.fire -= dt;
   }
-  for (const b of balls) { if (b.fire > 0) b.fire -= dt; }
   if (shakeFrames > 0) shakeFrames -= dt;
 
   // Particles
@@ -742,7 +737,7 @@ function update(dt) {
           balls.push(nb);
         } else if (brick.pu === 'wide' && wideTimer === 0 && widePauseTimer === 0 && wideShrinkTimer === 0) {
           activatePowerUp('wide');
-        } else if (brick.pu === 'fireball' && b.fire <= 0 && hotPauseTimer <= 0) {
+        } else if (brick.pu === 'fireball' && b.fire <= 0 && b.transform <= 0) {
           // Burst all other balls with explosion + pop sound
           for (let k = balls.length - 1; k >= 0; k--) {
             if (balls[k] !== b) {
@@ -751,9 +746,8 @@ function update(dt) {
               balls.splice(k, 1);
             }
           }
-          // Freeze game and start transformation animation
-          hotBall = b;
-          hotPauseTimer = HOT_PAUSE;
+          // Start per-ball transformation animation (game keeps running)
+          b.transform = HOT_PAUSE;
           hotTriggered = true;
           snd.fireStart();
           break; // exit brick loop (outer ball loop exits via hotTriggered)
@@ -997,10 +991,10 @@ function drawBalls() {
     g.fill();
   }
 
-  // Fireball transformation animation
-  if (hotPauseTimer > 0 && hotBall) {
-    const hb = hotBall;
-    const prog = 1 - hotPauseTimer / HOT_PAUSE; // 0→1 over pause
+  // Fireball transformation animation (per-ball, runs while game plays)
+  for (const hb of balls) {
+    if (hb.transform <= 0) continue;
+    const prog = 1 - hb.transform / HOT_PAUSE; // 0→1 over transformation
     const pulse = 0.5 + 0.5 * Math.sin(frameCount * 0.55);
 
     // Expanding ignition rings
