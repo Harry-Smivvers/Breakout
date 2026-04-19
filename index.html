@@ -45,8 +45,8 @@
 <body>
 <canvas id="c"></canvas>
 <div id="btns">
-  <button class="btn" id="bUp">▲</button>
-  <button class="btn" id="bDown">▼</button>
+  <button class="btn" id="bLeft">◄</button>
+  <button class="btn" id="bRight">►</button>
   <button class="btn" id="bHit">HIT</button>
   <button class="btn" id="bPause">Pause</button>
   <button class="btn" id="bWall">Wall</button>
@@ -57,25 +57,22 @@
 'use strict';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
-const CW = 800, CH = 560;
-const HUD_H = 38;
+const CW = 540, CH = 960;   // Portrait
+const HUD_H = 76;
 const WALL  = 12;
 
 const FL = WALL;
-const FR = CW;
+const FR = CW - WALL;       // rechts immer geschlossen
 const FT = HUD_H + WALL;
-const FB = CH - WALL;
+const FB = CH - WALL;       // Unterkante (offen – Ball fällt durch)
 
-const WALL_R        = WALL * 2; // thickness of right power-up wall
-const PAD_W        = 14;
-const PAD_H_BASE   = 82;
-const PAD_H_BIG    = Math.min(Math.round(PAD_H_BASE * 1.85), 220);
+const WALL_R        = WALL * 2; // thickness of bottom power-up wall
+const PAD_H_THICK   = 14;       // paddle thickness (Höhe), immer fix
 const WIDE_PAUSE   = 50;   // frames game freezes while paddle grows
 const WIDE_SHRINK  = 70;   // frames shrink animation
 const HOT_PAUSE    = 55;   // frames game freezes during fireball transformation
-const PAD_X        = CW - WALL_R - 3 - PAD_W;
-const PAD_RIGHT    = CW - WALL_R - 3;
 const PAD_SPEED  = 6.5;
+let padBaseW = 100;             // Basisbreite, wird aus Bild-Aspekt × PAD_H_THICK gesetzt
 
 const BALL_R     = 14;
 const BASE_SPEED = 6;
@@ -83,7 +80,7 @@ const BOUNCE_BOOST = 0.08; // speed added per bounce, as fraction of base speed
 const TRAIL_LEN  = 14;
 const BALL_COLORS = ['#7dff8a','#f1c40f','#74b9ff','#e67e22','#a29bfe','#00cec9','#fd79a8','#55efc4'];
 
-const BW = 36, BH = 55, BGAP = 5;
+const BW = 66, BH = 43, BGAP = 5;
 
 const COLORS = [
   '#e74c3c','#e67e22','#f1c40f','#27ae60',
@@ -386,10 +383,10 @@ const snd = {
 
 // ─── Paddle image ──────────────────────────────────────────────────────────
 const padImg = new Image();
-padImg.src = 'stick-v.png';
+padImg.src = 'stick_h.png';
 
 // ─── Stone images ──────────────────────────────────────────────────────────
-const stoneImgs = ['stone.png', 'stone2.png', 'stone3.png'].map(src => {
+const stoneImgs = ['stone_h.png', 'stone2_h.png', 'stone3_h.png'].map(src => {
   const img = new Image(); img.src = src; return img;
 });
 
@@ -404,21 +401,21 @@ function resize() {
   const H = window.innerHeight;
   const btns = document.getElementById('btns');
 
-  // Scale buttons so they don't crowd out the canvas
-  const targetBtnH = Math.max(36, Math.min(68, H * 0.11));
-  const fs  = Math.max(11, Math.min(22, Math.round(targetBtnH * 0.40)));
-  const pv  = Math.max(4,  Math.round(fs * 0.32));
-  const ph  = Math.max(8,  Math.round(fs * 0.95));
-  const gap = Math.max(4,  Math.round(fs * 0.45));
+  // Buttons kompakt halten – Portrait braucht die Höhe für den Canvas
+  const targetBtnH = Math.max(32, Math.min(52, H * 0.07));
+  const fs  = Math.max(11, Math.min(18, Math.round(targetBtnH * 0.42)));
+  const pv  = Math.max(4,  Math.round(fs * 0.28));
+  const ph  = Math.max(8,  Math.round(fs * 0.80));
+  const gap = Math.max(4,  Math.round(fs * 0.40));
   btns.style.gap = gap + 'px';
   document.querySelectorAll('.btn').forEach(b => {
     b.style.fontSize = fs + 'px';
     b.style.padding  = pv + 'px ' + ph + 'px';
   });
 
-  // Read actual button height after reflow
-  const bh = btns.offsetHeight + 10;
-  scale = Math.min(W / CW, (H - bh) / CH) * 0.98;
+  // Primär nach Höhe skalieren, Breite als Begrenzung
+  const bh = btns.offsetHeight + 8;
+  scale = Math.min(W / CW, (H - bh) / CH);
   canvas.style.width  = Math.round(CW * scale) + 'px';
   canvas.style.height = Math.round(CH * scale) + 'px';
 }
@@ -437,7 +434,7 @@ const stars = Array.from({length: 70}, () => ({
 // READY | PLAYING | PAUSED | BALL_LOST | LEVEL_COMPLETE | GAME_OVER
 let state            = 'READY';
 let stateBeforePause = null;
-let rightWall        = false;
+let bottomWall        = false;
 let score = 0, level = 1, lives = 2;
 let speedMult  = 1;
 let userSpeed  = 1.0;  // user-controlled multiplier
@@ -446,16 +443,22 @@ let frameCount = 0;
 
 // Paddle
 const pad = {
-  x: PAD_X, y: (FT + FB) / 2 - PAD_H_BASE / 2,
-  w: PAD_W, h: PAD_H_BASE,
+  x: (FL + FR) / 2 - Math.round((FR - FL) * 0.11), y: FB - PAD_H_THICK,
+  w: Math.round((FR - FL) * 0.22), h: PAD_H_THICK,
   flash: 0
 };
 
 function updatePadDimensions() {
+  pad.h = PAD_H_THICK;
   if (padImg.naturalWidth && padImg.naturalHeight) {
-    pad.w = Math.round(pad.h * padImg.naturalWidth / padImg.naturalHeight);
+    // Basisbreite = ~22 % der Feldbreite; Bild wird gestreckt
+    padBaseW = Math.round((FR - FL) * 0.22);
+    if (wideTimer === 0 && widePauseTimer === 0 && wideShrinkTimer === 0) {
+      pad.w = padBaseW;
+    }
   }
-  pad.x = PAD_RIGHT - pad.w;
+  pad.y = FB - PAD_H_THICK;
+  pad.x = clamp(pad.x, FL, FR - pad.w);
 }
 
 // Balls array (supports multiball)
@@ -548,8 +551,8 @@ function genLevel(lvl) {
   bricks = [];
   const stepX = BW + BGAP;
   const stepY = BH + BGAP;
-  const ax  = FL + 6,                          ay  = FT + 8;
-  const ax2 = PAD_X - Math.round(CW / 4),      ay2 = FB - 8;
+  const ax  = FL + 6,                           ay  = FT + 8;
+  const ax2 = FR - 6,                           ay2 = FT + 8 + 12 * (BH + BGAP);
 
   const cols   = Math.floor((ax2 - ax) / stepX);
   const rows   = Math.floor((ay2 - ay) / stepY);
@@ -604,31 +607,31 @@ function genLevel(lvl) {
 function snapBall() {
   balls = [makeBall()];
   const b = balls[0];
-  b.x = pad.x - b.r - 1;
-  b.y = pad.y + pad.h / 2;
+  b.x = pad.x + pad.w / 2;   // Mitte des Schlägers
+  b.y = pad.y - b.r - 1;     // direkt oberhalb
 }
 
 function launch() {
   if (state !== 'READY') return;
   if (balls.length === 0) balls = [makeBall()];
   const b = balls[0];
-  b.x = pad.x - b.r - 1;
-  b.y = pad.y + pad.h / 2;
-  const angle = (Math.random() * 80 - 40) * Math.PI / 180;
+  b.x = pad.x + pad.w / 2;
+  b.y = pad.y - b.r - 1;
+  const angle = (Math.random() * 80 - 40) * Math.PI / 180;  // ±40° von senkrecht
   const sp = BASE_SPEED * speedMult * userSpeed;
-  b.vx = -Math.cos(angle) * sp;
-  b.vy =  Math.sin(angle) * sp;
+  b.vx =  Math.sin(angle) * sp;   // zufällig links/rechts
+  b.vy = -Math.cos(angle) * sp;   // immer nach oben
   state = 'PLAYING';
 }
 
 function restart() {
   score = 0; level = 1; lives = 2; speedMult = 1;
-  stateBeforePause = null; rightWall = false;
+  stateBeforePause = null; bottomWall = false;
   wideTimer = 0; widePauseTimer = 0; wideShrinkTimer = 0;
   wallPowerTimer = 0; wallAnimIn = 0; wallAnimOut = 0;
 
-  pad.y = (FT + FB) / 2 - PAD_H_BASE / 2;
-  pad.h = PAD_H_BASE; pad.flash = 0; updatePadDimensions();
+  pad.x = (FL + FR) / 2 - padBaseW / 2;
+  pad.w = padBaseW; pad.h = PAD_H_THICK; pad.flash = 0; updatePadDimensions();
   particles = []; powerUps = [];
   genLevel(1);
   snapBall();
@@ -665,13 +668,13 @@ function togglePause() {
 const keys = {};
 document.addEventListener('keydown', e => {
   keys[e.code] = true;
-  if (e.code === 'ArrowLeft' || e.code === 'Enter') {
+  if (e.code === 'ArrowUp' || e.code === 'Enter') {
     e.preventDefault();
     if (state === 'READY')     launch();
     if (state === 'GAME_OVER') restart();
   }
   if (e.code === 'Space')  { e.preventDefault(); togglePause(); }
-  if (e.code === 'KeyW')   rightWall = !rightWall;
+  if (e.code === 'KeyW')   bottomWall = !bottomWall;
   if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd')      changeSpeed(1.1);
   if (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract') changeSpeed(1 / 1.1);
   if (e.key  === '!')      lives++;
@@ -680,12 +683,12 @@ document.addEventListener('keydown', e => {
     speedMult = Math.min(1 + (level - 1) * 0.12, 1.8);
     genLevel(level); snapBall(); state = 'READY';
   }
-  if (['ArrowUp','ArrowDown','ArrowLeft','Space'].includes(e.code)) e.preventDefault();
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault();
 });
 document.addEventListener('keyup', e => { delete keys[e.code]; });
 
 // Buttons
-const btnState = { up: false, down: false };
+const btnState = { left: false, right: false };
 function setupPadBtn(el, dir) {
   const on  = () => { btnState[dir] = true;  el.classList.add('active'); };
   const off = () => { btnState[dir] = false; el.classList.remove('active'); };
@@ -696,8 +699,8 @@ function setupPadBtn(el, dir) {
   el.addEventListener('touchend',    ev => { ev.preventDefault(); off(); }, { passive: false });
   el.addEventListener('touchcancel', ev => { ev.preventDefault(); off(); }, { passive: false });
 }
-setupPadBtn(document.getElementById('bUp'),   'up');
-setupPadBtn(document.getElementById('bDown'), 'down');
+setupPadBtn(document.getElementById('bLeft'),  'left');
+setupPadBtn(document.getElementById('bRight'), 'right');
 
 function hitAction() {
   if (state === 'READY')     launch();
@@ -712,7 +715,7 @@ bPause.addEventListener('mousedown',  togglePause);
 bPause.addEventListener('touchstart', ev => { ev.preventDefault(); togglePause(); }, { passive: false });
 
 const bWall = document.getElementById('bWall');
-function toggleWall() { rightWall = !rightWall; bWall.classList.toggle('active', rightWall); }
+function toggleWall() { bottomWall = !bottomWall; bWall.classList.toggle('active', bottomWall); }
 bWall.addEventListener('mousedown',  toggleWall);
 bWall.addEventListener('touchstart', ev => { ev.preventDefault(); toggleWall(); }, { passive: false });
 
@@ -723,21 +726,21 @@ bSpeedUp.addEventListener('touchstart', ev => { ev.preventDefault(); changeSpeed
 bSpeedDown.addEventListener('mousedown',  () => changeSpeed(1 / 1.1));
 bSpeedDown.addEventListener('touchstart', ev => { ev.preventDefault(); changeSpeed(1 / 1.1); }, { passive: false });
 
-// Touch on canvas
-let tY0 = 0, tYlast = 0, tMoved = false, tTime = 0;
+// Touch on canvas – horizontal drag bewegt Paddle
+let tX0 = 0, tXlast = 0, tMoved = false, tTime = 0;
 canvas.addEventListener('touchstart', ev => {
   ev.preventDefault();
   const t = ev.touches[0];
-  tY0 = tYlast = t.clientY; tMoved = false; tTime = Date.now();
+  tX0 = tXlast = t.clientX; tMoved = false; tTime = Date.now();
 }, { passive: false });
 canvas.addEventListener('touchmove', ev => {
   ev.preventDefault();
   const t = ev.touches[0];
-  if (Math.abs(t.clientY - tY0) > 8) tMoved = true;
-  const dy = (t.clientY - tYlast) / scale;
-  pad.y = clamp(pad.y + dy, FT, FB - pad.h);
+  if (Math.abs(t.clientX - tX0) > 8) tMoved = true;
+  const dx = (t.clientX - tXlast) / scale;
+  pad.x = clamp(pad.x + dx, FL, FR - pad.w);
   if (state === 'READY') snapBall();
-  tYlast = t.clientY;
+  tXlast = t.clientX;
 }, { passive: false });
 canvas.addEventListener('touchend', ev => {
   ev.preventDefault();
@@ -763,7 +766,7 @@ function tickState() {
         speedMult = Math.min(1 + (level - 1) * 0.12, 1.8);
         wideTimer = 0; widePauseTimer = 0; wideShrinkTimer = 0;
         wallPowerTimer = 0; wallAnimIn = 0; wallAnimOut = 0;
-        pad.h = PAD_H_BASE; updatePadDimensions();
+        pad.w = padBaseW; updatePadDimensions();
         for (const b of balls) b.fire = 0;
         genLevel(level); snapBall(); state = 'READY';
       }
@@ -773,13 +776,13 @@ function tickState() {
 
 // ─── Update ────────────────────────────────────────────────────────────────
 function update(dt) {
-  // Paddle movement with hold-acceleration
-  let pdy = 0;
+  // Paddle movement with hold-acceleration (horizontal)
+  let pdx = 0;
   if (state !== 'PAUSED') {
-  if (keys['ArrowUp']   || btnState.up)                  pdy -= 1;
-  if (keys['ArrowDown'] || keys['KeyS'] || btnState.down) pdy += 1;
+    if (keys['ArrowLeft']  || btnState.left)  pdx -= 1;
+    if (keys['ArrowRight'] || btnState.right) pdx += 1;
   }
-  if (pdy !== 0) {
+  if (pdx !== 0) {
     padHoldTimer += dt;
   } else {
     padHoldTimer = 0;
@@ -789,16 +792,19 @@ function update(dt) {
   const padSpeedFactor = padHoldTimer > HOLD_START
     ? Math.min(3, 1 + (padHoldTimer - HOLD_START) / 48)
     : 1;
-  pad.y = clamp(pad.y + pdy * PAD_SPEED * padSpeedFactor * dt, FT, FB - pad.h);
+  pad.x = clamp(pad.x + pdx * PAD_SPEED * padSpeedFactor * dt, FL, FR - pad.w);
+  pad.y = FB - PAD_H_THICK;
   if (pad.flash > 0) pad.flash -= dt;
 
   // Wide: kurze Spielpause während Wachstum
   if (widePauseTimer > 0) {
     widePauseTimer -= dt;
     const frac = 1 - Math.max(0, widePauseTimer) / WIDE_PAUSE;
-    pad.h = Math.round(PAD_H_BASE + (PAD_H_BIG - PAD_H_BASE) * frac);
-    updatePadDimensions();
-    pad.y = clamp(pad.y, FT, FB - pad.h);
+    const bigW = Math.min(Math.round(padBaseW * 1.85), FR - FL - 20);
+    const cx = pad.x + pad.w / 2;
+    pad.w = Math.round(padBaseW + (bigW - padBaseW) * frac);
+    pad.x = clamp(cx - pad.w / 2, FL, FR - pad.w);
+    pad.y = FB - PAD_H_THICK;
     return; // Spiel eingefroren während Wachstum
   }
   // Wide: countdown
@@ -813,9 +819,11 @@ function update(dt) {
   if (wideShrinkTimer > 0) {
     wideShrinkTimer -= dt;
     const frac = Math.max(0, wideShrinkTimer) / WIDE_SHRINK;
-    pad.h = Math.round(PAD_H_BASE + (PAD_H_BIG - PAD_H_BASE) * frac);
-    updatePadDimensions();
-    pad.y = clamp(pad.y, FT, FB - pad.h);
+    const bigW = Math.min(Math.round(padBaseW * 1.85), FR - FL - 20);
+    const cx = pad.x + pad.w / 2;
+    pad.w = Math.round(padBaseW + (bigW - padBaseW) * frac);
+    pad.x = clamp(cx - pad.w / 2, FL, FR - pad.w);
+    pad.y = FB - PAD_H_THICK;
   }
   // Wall power-up timer + per-ball timers: eingefroren während Pause
   if (state !== 'PAUSED') {
@@ -866,8 +874,8 @@ function update(dt) {
   if (state === 'READY') {
     if (balls.length === 0) balls = [makeBall()];
     const b = balls[0];
-    b.x = pad.x - b.r - 1;
-    b.y = pad.y + pad.h / 2;
+    b.x = pad.x + pad.w / 2;
+    b.y = pad.y - b.r - 1;
     b.trail = [];
     return;
   }
@@ -890,27 +898,26 @@ function update(dt) {
       const baseSp = BASE_SPEED * speedMult * userSpeed;
       if (sp > baseSp) { const f = Math.max(Math.pow(0.997, dt), baseSp / sp); b.vx *= f; b.vy *= f; } }
 
-    // Wall collisions
+    // Wall collisions – oben/links/rechts immer geschlossen
     if (b.y - b.r < FT) { b.y = FT + b.r; b.vy =  Math.abs(b.vy); snd.wall(); boostBall(b); }
-    if (b.y + b.r > FB) { b.y = FB - b.r; b.vy = -Math.abs(b.vy); snd.wall(); boostBall(b); }
     if (b.x - b.r < FL) { b.x = FL + b.r; b.vx =  Math.abs(b.vx); snd.wall(); boostBall(b); }
+    if (b.x + b.r > FR) { b.x = FR - b.r; b.vx = -Math.abs(b.vx); snd.wall(); boostBall(b); }
 
-    // Right side: wall or exit
-    const walled = rightWall || wallPowerTimer > 0 || wallAnimOut > 0;
+    // Unten: Wall-Power-up oder Ball verloren
+    const walled = bottomWall || wallPowerTimer > 0 || wallAnimOut > 0;
     if (walled) {
-      const wallEdge = (wallPowerTimer > 0 || wallAnimOut > 0) ? CW - WALL_R : CW - WALL;
-      if (b.x + b.r > wallEdge) {
-        b.x = wallEdge - b.r; b.vx = -Math.abs(b.vx); snd.wall(); boostBall(b);
+      if (b.y + b.r > FB) {
+        b.y = FB - b.r; b.vy = -Math.abs(b.vy); snd.wall(); boostBall(b);
       }
     } else {
-      if (b.x - b.r > FR + 30) {
+      if (b.y + b.r > FB + 30) {
         balls.splice(bi, 1);
         if (balls.length === 0) {
           snd.lost();
           lives--;
           shakeFrames = 28; shakeMag = 9;
           wideTimer = 0; widePauseTimer = 0; wideShrinkTimer = 0;
-          pad.h = PAD_H_BASE; updatePadDimensions();
+          pad.w = padBaseW; updatePadDimensions();
           balls.forEach(b => { b.fire = 0; b.transform = 0; });
           if (lives < 0) { state = 'GAME_OVER'; }
           else           { state = 'BALL_LOST'; stateTimer = 100; }
@@ -919,19 +926,19 @@ function update(dt) {
       }
     }
 
-    // Paddle collision
-    if (b.vx > 0 &&
-        b.x + b.r >= pad.x &&
-        b.x - b.r <= pad.x + pad.w &&
+    // Paddle collision – Ball trifft Paddle von oben
+    if (b.vy > 0 &&
         b.y + b.r >= pad.y &&
-        b.y - b.r <= pad.y + pad.h) {
-      const rel   = (b.y - (pad.y + pad.h / 2)) / (pad.h / 2);
-      const angle = rel * (Math.PI / 3);
+        b.y - b.r <= pad.y + pad.h &&
+        b.x + b.r >= pad.x &&
+        b.x - b.r <= pad.x + pad.w) {
+      const rel   = (b.x - (pad.x + pad.w / 2)) / (pad.w / 2);  // -1 links … +1 rechts
+      const angle = rel * (Math.PI / 3);                           // ±60°
       const sp    = Math.hypot(b.vx, b.vy);
-      b.vx = -Math.cos(angle) * sp;
-      b.vy =  Math.sin(angle) * sp;
+      b.vx =  Math.sin(angle) * sp;
+      b.vy = -Math.cos(angle) * sp;   // immer nach oben
       boostBall(b);
-      b.x  = pad.x - b.r - 1;
+      b.y  = pad.y - b.r - 1;
       snd.paddle();
       pad.flash = 14;
       shakeFrames = 6; shakeMag = 3;
@@ -1046,65 +1053,66 @@ function drawHUD() {
   g.fillStyle = '#3d5a80';
   g.fillRect(-20, HUD_H - 2, CW + 40, 2);
 
-  g.font = 'bold 15px monospace';
-  g.fillStyle = '#d0d8ff';
+  // Hauptzeile: Score | Level | Life  (44 px, gekürzte Labels)
+  g.font = 'bold 44px monospace';
   g.textAlign = 'left';
-  g.fillText('Score: ' + String(score).padStart(6, '0'), 14, HUD_H - 10);
+  g.fillStyle = '#d0d8ff';
+  g.fillText(String(score).padStart(6, '0'), 14, HUD_H - 10);
 
   g.textAlign = 'center';
-  g.fillText('Level: ' + String(level).padStart(3, '0'), CW / 2, HUD_H - 10);
+  g.fillText('L' + String(level).padStart(2, '0'), CW / 2, HUD_H - 10);
 
   g.textAlign = 'right';
   g.fillStyle = lives === 0 ? '#e74c3c' : '#d0d8ff';
-  const lifeX = (wallPowerTimer > 0 || wallAnimIn > 0 || wallAnimOut > 0) ? CW - 90 : CW - 14;
-  g.fillText('Life: ' + lives, lifeX, HUD_H - 10);
+  g.fillText('\u2665' + lives, CW - 14, HUD_H - 10);
+
+  // Power-up timers + Wall-Timer (obere Zeile, 16 px)
+  let px = 14;
+  g.font = 'bold 16px monospace';
+  g.textAlign = 'left';
+  if (wideTimer > 0 || widePauseTimer > 0 || wideShrinkTimer > 0) {
+    g.fillStyle = wideShrinkTimer > 0 ? '#e67e22' : PU_COLORS.wide;
+    const label = widePauseTimer > 0 ? 'BIG!' : wideShrinkTimer > 0 ? 'BIG\u2192' : 'BIG ' + Math.ceil(wideTimer / 60) + 's';
+    g.fillText(label, px, 20);
+    px += 90;
+  }
+  const maxFire = balls.reduce((m, b) => Math.max(m, b.fire || 0), 0);
+  if (maxFire > 0) {
+    g.fillStyle = PU_COLORS.fireball;
+    g.fillText('HOT ' + Math.ceil(maxFire / 60) + 's', px, 20);
+    px += 90;
+  }
+  { const activeBall = balls.find(b => b.vx !== 0 || b.vy !== 0);
+    const sp = activeBall ? Math.hypot(activeBall.vx, activeBall.vy) : BASE_SPEED * speedMult * userSpeed;
+    const ratio = sp / BASE_SPEED;
+    g.fillStyle = ratio > speedMult * userSpeed + 0.05 ? '#f1c40f' : ratio < speedMult * userSpeed - 0.05 ? '#74b9ff' : '#d0d8ff';
+    g.fillText('SPD ' + ratio.toFixed(2) + 'x', px, 20); }
   if (wallPowerTimer > 0 || wallAnimIn > 0 || wallAnimOut > 0) {
     const secs = wallPowerTimer > 0 ? Math.ceil(wallPowerTimer / 60) : 0;
     const pulse = 0.7 + 0.3 * Math.sin(frameCount * 0.18);
     g.fillStyle = wallAnimOut > 0
       ? `rgba(255,100,100,${pulse.toFixed(2)})`
       : `rgba(0,206,201,${pulse.toFixed(2)})`;
-    g.fillText('Wall ' + secs + 's', CW - 14, HUD_H - 10);
+    g.textAlign = 'right';
+    g.fillText('Wall ' + secs + 's', CW - 14, 20);
   }
-
-  // Power-up timers in HUD
-  let px = 14;
-  g.font = 'bold 11px monospace';
-  g.textAlign = 'left';
-  if (wideTimer > 0 || widePauseTimer > 0 || wideShrinkTimer > 0) {
-    g.fillStyle = wideShrinkTimer > 0 ? '#e67e22' : PU_COLORS.wide;
-    const label = widePauseTimer > 0 ? 'BIG!' : wideShrinkTimer > 0 ? 'BIG\u2193' : 'BIG ' + Math.ceil(wideTimer / 60) + 's';
-    g.fillText(label, px, 12);
-    px += 70;
-  }
-  const maxFire = balls.reduce((m, b) => Math.max(m, b.fire || 0), 0);
-  if (maxFire > 0) {
-    g.fillStyle = PU_COLORS.fireball;
-    g.fillText('HOT ' + Math.ceil(maxFire / 60) + 's', px, 12);
-    px += 70;
-  }
-  { const activeBall = balls.find(b => b.vx !== 0 || b.vy !== 0);
-    const sp = activeBall ? Math.hypot(activeBall.vx, activeBall.vy) : BASE_SPEED * speedMult * userSpeed;
-    const ratio = sp / BASE_SPEED;
-    g.fillStyle = ratio > speedMult * userSpeed + 0.05 ? '#f1c40f' : ratio < speedMult * userSpeed - 0.05 ? '#74b9ff' : '#d0d8ff';
-    g.fillText('SPD ' + ratio.toFixed(2) + 'x', px, 12); }
 }
 
 function drawWalls() {
+  // Statische Wände: oben, links, rechts (immer geschlossen)
   g.fillStyle = '#1e3a5f';
-  g.fillRect(0, HUD_H, CW, WALL);
-  g.fillRect(0, HUD_H, WALL, CH - HUD_H);
-  g.fillRect(0, CH - WALL, CW, WALL);
+  g.fillRect(0,  HUD_H, CW, WALL);            // oben
+  g.fillRect(0,  HUD_H, WALL, CH - HUD_H);    // links
+  g.fillRect(FR, HUD_H, WALL, CH - HUD_H);    // rechts
 
-  // Rechte Wand: manuell oder Power-up
+  // Untere Wand: manuell (grün) oder Power-up (teal, animiert links→rechts→Mitte)
   const timedActive = wallPowerTimer > 0 || wallAnimIn > 0 || wallAnimOut > 0;
-  if (rightWall) {
+  if (bottomWall) {
     g.fillStyle = '#2a5f3a';
-    g.fillRect(CW - WALL, HUD_H, WALL, CH - HUD_H);
+    g.fillRect(FL, FB, FR - FL, WALL);
   }
   if (timedActive) {
-    const halfH = (CH - HUD_H) / 2;
-    // prog: 0 = unsichtbar, 1 = vollständig
+    const halfW = (FR - FL) / 2;
     let prog = 1, alpha = 1;
     if (wallAnimIn > 0) {
       prog  = 1 - wallAnimIn / WALL_ANIM;
@@ -1113,39 +1121,41 @@ function drawWalls() {
       prog  = wallAnimOut / WALL_ANIM;
       alpha = prog * (Math.floor(frameCount) % 5 < 3 ? 1 : 0.15);
     }
-    const segH = prog * halfH;
+    const segW = prog * halfW;
+    // wächst von links+rechts zur Mitte (einblenden) / zieht sich zur Mitte zurück (ausblenden)
     const segs = [
-      { y: HUD_H,          h: segH },         // wächst von oben
-      { y: CH - segH,      h: segH },          // wächst von unten
+      { x: FL,          w: segW },
+      { x: FR - segW,   w: segW },
     ];
     g.save();
     g.globalAlpha = Math.max(0, Math.min(1, alpha));
-    for (const { y, h } of segs) {
-      if (h <= 0) continue;
+    for (const { x, w } of segs) {
+      if (w <= 0) continue;
       g.fillStyle = '#007f72';
-      g.fillRect(CW - WALL_R, y, WALL_R, h);
+      g.fillRect(x, FB, w, WALL_R);
       g.fillStyle = '#00cec9';
-      g.fillRect(CW - WALL_R + 2, y, WALL_R - 4, h);
+      g.fillRect(x, FB + 2, w, WALL_R - 4);
       g.fillStyle = 'rgba(0,255,240,0.30)';
-      g.fillRect(CW - WALL_R, y, 3, h);
-      const grd = g.createLinearGradient(CW - WALL_R - 18, 0, CW - WALL_R, 0);
+      g.fillRect(x, FB, w, 3);
+      // Glow nach oben
+      const grd = g.createLinearGradient(0, FB - 18, 0, FB);
       grd.addColorStop(0, 'rgba(0,206,201,0)');
       grd.addColorStop(1, 'rgba(0,206,201,0.25)');
       g.fillStyle = grd;
-      g.fillRect(CW - WALL_R - 18, y, 18, h);
+      g.fillRect(x, FB - 18, w, 18);
     }
     g.restore();
   }
 
+  // Highlights
   g.fillStyle = 'rgba(255,255,255,0.13)';
-  g.fillRect(0, HUD_H, CW, 2);
-  g.fillRect(0, HUD_H, 2, CH - HUD_H);
-  g.fillRect(0, CH - WALL, CW, 2);
-  if (rightWall) g.fillRect(CW - WALL, HUD_H, 2, CH - HUD_H);
+  g.fillRect(0,  HUD_H, CW, 2);
+  g.fillRect(0,  HUD_H, 2, CH - HUD_H);
+  g.fillRect(FR, HUD_H, 2, CH - HUD_H);
   g.fillStyle = 'rgba(0,0,0,0.4)';
-  g.fillRect(0, HUD_H + WALL - 2, CW, 2);
+  g.fillRect(0,        HUD_H + WALL - 2, CW, 2);
   g.fillRect(WALL - 2, HUD_H, 2, CH - HUD_H);
-  g.fillRect(0, CH - WALL - 2, CW, 2);
+  g.fillRect(FR + WALL - 2, HUD_H, 2, CH - HUD_H);
 }
 
 function drawBricks() {
@@ -1341,7 +1351,7 @@ function drawOverlays() {
     g.fillStyle = 'rgba(255,255,255,0.35)';
     g.font = '13px monospace';
     g.textAlign = 'center';
-    g.fillText('\u2190 \u00B7 HIT \u00B7 Tap = Launch', mx, FB - 14);
+    g.fillText('\u2191 \u00B7 HIT \u00B7 Tap = Launch', mx, FB - PAD_H_THICK - BALL_R * 3);
     return;
   }
   if (state === 'BALL_LOST') {
@@ -1375,7 +1385,7 @@ function drawOverlays() {
     g.fillText('Score: ' + String(score).padStart(6, '0'), mx, my + 10);
     g.fillStyle = '#999';
     g.font = '15px monospace';
-    g.fillText('\u2190 \u00B7 HIT \u00B7 Tap = Restart', mx, my + 42);
+    g.fillText('\u2191 \u00B7 HIT \u00B7 Tap = Restart', mx, my + 42);
   }
   if (state === 'PAUSED') {
     dimField();
@@ -1404,7 +1414,7 @@ function loop(ts) {
 resize();
 genLevel(1);
 snapBall();
-padImg.onload = updatePadDimensions;
+padImg.onload = () => { updatePadDimensions(); snapBall(); };
 requestAnimationFrame(loop);
 </script>
 </body>
