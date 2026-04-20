@@ -506,6 +506,7 @@ let bottomWall        = false;
 let score = 0, level = 1, lives = 2;
 let speedMult  = 1;
 let userSpeed  = 1.0;  // user-controlled multiplier
+let userSpeedTouched = false;
 let stateTimer = 0;
 let frameCount = 0;
 
@@ -532,7 +533,7 @@ function updatePadDimensions() {
 // Balls array (supports multiball)
 let balls = [];
 function makeBall(color = null) {
-  return { x: 0, y: 0, vx: 0, vy: 0, r: BALL_R, trail: [], color, fire: 0, transform: 0 };
+  return { x: 0, y: 0, vx: 0, vy: 0, r: BALL_R, trail: [], color, fire: 0, transform: 0, flatTimer: 0, baseSpeed: BASE_SPEED };
 }
 
 // Particles
@@ -562,6 +563,7 @@ let rocket = null;
 let rocketExplAnim = null;
 let healthPill = null;
 let healthAnim = [];
+let lastBrickHitTimer = 0;
 
 // ─── Particles ─────────────────────────────────────────────────────────────
 function spawnExplosion(x, y, color) {
@@ -600,7 +602,7 @@ function spawnBigExplosion(x, y) {
 // ─── Power-ups ─────────────────────────────────────────────────────────────
 const PU_TYPES  = ['multiball', 'wide', 'fireball', 'wall'];
 const PU_COLORS = { multiball: '#f1c40f', wide: '#3498db', fireball: '#ff6b35', wall: '#00cec9', health: '#2ecc71' };
-const PU_LABELS = { multiball: 'Ball', wide: 'BIG', fireball: 'HOT', wall: 'Wall', health: '€' };
+const PU_LABELS = { multiball: 'Ball', wide: 'BIG', fireball: 'HOT', wall: 'Wall', health: '♥' };
 
 function trySpawnPowerUp(x, y) {
   if (Math.random() < 0.25) {
@@ -629,6 +631,7 @@ function activatePowerUp(type) {
       nb.x = ref.x; nb.y = ref.y;
       const ang = Math.atan2(ref.vy, ref.vx) + 0.45;
       const sp  = Math.hypot(ref.vx, ref.vy) || BASE_SPEED * speedMult;
+      nb.baseSpeed = ref.baseSpeed || sp;
       nb.vx = Math.cos(ang) * sp;
       nb.vy = Math.sin(ang) * sp;
       balls.push(nb);
@@ -714,18 +717,19 @@ function launch() {
   b.y = pad.y - b.r - 1;
   const angle = (Math.random() * 80 - 40) * Math.PI / 180;  // ±40° von senkrecht
   const sp = BASE_SPEED * speedMult * userSpeed;
-  b.vx =  Math.sin(angle) * sp;   // zufällig links/rechts
-  b.vy = -Math.cos(angle) * sp;   // immer nach oben
+  b.baseSpeed = sp;
+  b.vx =  Math.sin(angle) * sp;
+  b.vy = -Math.cos(angle) * sp;
   state = 'PLAYING';
 }
 
 function restart() {
-  score = 0; level = 1; lives = 2; speedMult = 1;
+  score = 0; level = 1; lives = 2; speedMult = 1; userSpeed = 1.0; userSpeedTouched = false;
   stateBeforePause = null; bottomWall = false;
   wideTimer = 0; widePauseTimer = 0; wideShrinkTimer = 0;
   wallPowerTimer = 0; wallAnimIn = 0; wallAnimOut = 0;
   pill = null; pillSpawned = false; hasRocket = false; rocket = null; rocketExplAnim = null;
-  healthPill = null; healthAnim = [];
+  healthPill = null; healthAnim = []; lastBrickHitTimer = 0;
 
   pad.x = (FL + FR) / 2 - padBaseW / 2;
   pad.w = padBaseW; pad.h = PAD_H_THICK; pad.flash = 0; updatePadDimensions();
@@ -739,17 +743,11 @@ function changeSpeed(factor) {
   const prev = userSpeed;
   userSpeed = Math.round(clamp(userSpeed * factor, 0.4, 4.0) * 100) / 100;
   if (userSpeed === prev) return;
+  userSpeedTouched = true;
   const ratio = userSpeed / prev;
-  for (const b of balls) { b.vx *= ratio; b.vy *= ratio; }
+  for (const b of balls) { b.vx *= ratio; b.vy *= ratio; b.baseSpeed *= ratio; }
 }
 
-function boostBall(b) {
-  const sp = Math.hypot(b.vx, b.vy);
-  if (sp === 0) return;
-  const baseSp = BASE_SPEED * speedMult * userSpeed;
-  const ns = Math.min(sp + baseSp * BOUNCE_BOOST, baseSp * 2.5);
-  b.vx = b.vx / sp * ns; b.vy = b.vy / sp * ns;
-}
 
 function launchRocket() {
   if (!hasRocket || rocket) return;
@@ -762,6 +760,7 @@ function togglePause() {
   if (state === 'PLAYING') {
     stateBeforePause = 'PLAYING';
     state = 'PAUSED';
+    lastBrickHitTimer = 0;
   } else if (state === 'PAUSED') {
     state = stateBeforePause || 'PLAYING';
     stateBeforePause = null;
@@ -785,7 +784,6 @@ document.addEventListener('keydown', e => {
   if (e.key  === '!')      lives++;
   if (e.key  === '§') {
     level++;
-    speedMult = Math.min(1 + (level - 1) * 0.12, 1.8);
     genLevel(level); snapBall(); state = 'READY';
   }
   if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault();
@@ -870,11 +868,11 @@ function tickState() {
         snapBall(); state = 'READY';
       } else {
         level++;
-        speedMult = Math.min(1 + (level - 1) * 0.12, 1.8);
+        if (!userSpeedTouched) userSpeed = 1.0;
         wideTimer = 0; widePauseTimer = 0; wideShrinkTimer = 0;
         wallPowerTimer = 0; wallAnimIn = 0; wallAnimOut = 0;
         pill = null; pillSpawned = false; hasRocket = false; rocket = null; rocketExplAnim = null;
-        healthPill = null; healthAnim = [];
+        healthPill = null; healthAnim = []; lastBrickHitTimer = 0;
         pad.w = padBaseW; updatePadDimensions();
         for (const b of balls) b.fire = 0;
         genLevel(level); snapBall(); state = 'READY';
@@ -1031,8 +1029,19 @@ function update(dt) {
       pill = null;
     } else if (pill.y > CH + 20) {
       pill = null;
+      lastBrickHitTimer = 0;
     }
   }
+  // Rocket pill after 10 s without brick hit
+  if (state === 'PLAYING' && !pill && !hasRocket && !rocket) {
+    lastBrickHitTimer += dt;
+    if (lastBrickHitTimer >= 600 && bricks.some(b => b.alive)) {
+      pill = { x: FL + Math.random() * (FR - FL - PILL_W), y: FT - PILL_H };
+      pillSpawned = true;
+      lastBrickHitTimer = 0;
+    }
+  }
+
   // Rocket explosion ring animation
   if (rocketExplAnim) {
     rocketExplAnim.timer -= dt;
@@ -1051,6 +1060,7 @@ function update(dt) {
       nb.x = ex; nb.y = ey + BALL_R + 2;
       const angle = (Math.random() * 80 - 40) * Math.PI / 180;
       const sp = BASE_SPEED * speedMult * userSpeed;
+      nb.baseSpeed = sp;
       nb.vx = Math.sin(angle) * sp; nb.vy = Math.cos(angle) * sp;
       balls.push(nb);
       rocket = null;
@@ -1078,10 +1088,13 @@ function update(dt) {
             state = 'LEVEL_COMPLETE'; stateTimer = 130;
             powerUps = []; pill = null; snd.levelComplete();
           } else {
+            lastBrickHitTimer = 0;
+            pillSpawned = false;
             const nb = makeBall();
             nb.x = ex; nb.y = ey;
             const angle = (Math.random() * 80 - 40) * Math.PI / 180;
             const sp = BASE_SPEED * speedMult * userSpeed;
+            nb.baseSpeed = sp;
             nb.vx = Math.sin(angle) * sp; nb.vy = -Math.cos(angle) * sp;
             balls.push(nb);
           }
@@ -1113,21 +1126,31 @@ function update(dt) {
     b.x += b.vx * dt;
     b.y += b.vy * dt;
 
-    // Decelerate toward base speed; never drops below it
-    { const sp = Math.hypot(b.vx, b.vy);
-      const baseSp = BASE_SPEED * speedMult * userSpeed;
-      if (sp > baseSp) { const f = Math.max(Math.pow(0.997, dt), baseSp / sp); b.vx *= f; b.vy *= f; } }
+
+    // Option A: auto-nudge after 120 frames of near-horizontal movement
+    if (Math.abs(b.vy) < Math.abs(b.vx) * 0.18) {
+      b.flatTimer = (b.flatTimer || 0) + dt;
+      if (b.flatTimer >= 120) {
+        const sp = Math.hypot(b.vx, b.vy);
+        b.vy = (b.vy <= 0 ? -1 : 1) * sp * 0.3;
+        b.flatTimer = 0;
+      }
+    } else {
+      b.flatTimer = 0;
+    }
 
     // Wall collisions – oben/links/rechts immer geschlossen
-    if (b.y - b.r < FT) { b.y = FT + b.r; b.vy =  Math.abs(b.vy); snd.wall(); boostBall(b); }
-    if (b.x - b.r < FL) { b.x = FL + b.r; b.vx =  Math.abs(b.vx); snd.wall(); boostBall(b); }
-    if (b.x + b.r > FR) { b.x = FR - b.r; b.vx = -Math.abs(b.vx); snd.wall(); boostBall(b); }
+    if (b.y - b.r < FT) { b.y = FT + b.r; b.vy =  Math.abs(b.vy); snd.wall(); }
+    if (b.x - b.r < FL) { b.x = FL + b.r; b.vx =  Math.abs(b.vx); snd.wall();
+      if (Math.abs(b.vy) / Math.abs(b.vx) < 0.18) { const sp = Math.hypot(b.vx, b.vy); b.vy += (b.vy <= 0 ? -1 : 1) * sp * 0.25; } }
+    if (b.x + b.r > FR) { b.x = FR - b.r; b.vx = -Math.abs(b.vx); snd.wall();
+      if (Math.abs(b.vy) / Math.abs(b.vx) < 0.18) { const sp = Math.hypot(b.vx, b.vy); b.vy += (b.vy <= 0 ? -1 : 1) * sp * 0.25; } }
 
     // Unten: Wall-Power-up oder Ball verloren
     const walled = bottomWall || wallPowerTimer > 0 || wallAnimOut > 0;
     if (walled) {
       if (b.y + b.r > FB) {
-        b.y = FB - b.r; b.vy = -Math.abs(b.vy); snd.wall(); boostBall(b);
+        b.y = FB - b.r; b.vy = -Math.abs(b.vy); snd.wall();
       }
     } else {
       if (b.y + b.r > FB + 30) {
@@ -1138,7 +1161,7 @@ function update(dt) {
           shakeFrames = 28; shakeMag = 9;
           wideTimer = 0; widePauseTimer = 0; wideShrinkTimer = 0;
           pill = null; pillSpawned = false; hasRocket = false; rocket = null; rocketExplAnim = null;
-          healthPill = null; healthAnim = [];
+          healthPill = null; healthAnim = []; lastBrickHitTimer = 0;
           pad.w = padBaseW; updatePadDimensions();
           balls.forEach(b => { b.fire = 0; b.transform = 0; });
           if (lives < 0) { state = 'GAME_OVER'; }
@@ -1159,7 +1182,6 @@ function update(dt) {
       const sp    = Math.hypot(b.vx, b.vy);
       b.vx =  Math.sin(angle) * sp;
       b.vy = -Math.cos(angle) * sp;   // immer nach oben
-      boostBall(b);
       b.y  = pad.y - b.r - 1;
       snd.paddle();
       pad.flash = 14;
@@ -1175,6 +1197,7 @@ function update(dt) {
         hitBrick = true;
         brick.alive = false;
         score += 10;
+        lastBrickHitTimer = 0;
         snd.brick();
         spawnExplosion(brick.x + brick.w / 2, brick.y + brick.h / 2, brick.color);
         shakeFrames = 2; shakeMag = 0.8;
@@ -1183,6 +1206,7 @@ function update(dt) {
           nb.x = b.x; nb.y = b.y;
           const ang = Math.atan2(b.vy, b.vx) + (Math.random() < 0.5 ? 0.6 : -0.6);
           const sp  = Math.hypot(b.vx, b.vy);
+          nb.baseSpeed = b.baseSpeed;
           nb.vx = Math.cos(ang) * sp;
           nb.vy = Math.sin(ang) * sp;
           balls.push(nb);
@@ -1217,7 +1241,6 @@ function update(dt) {
         const oB = (brick.y + brick.h) - (b.y - b.r);
         const m  = Math.min(oL, oR, oT, oB);
         if (m === oL || m === oR) b.vx = -b.vx; else b.vy = -b.vy;
-        boostBall(b);
       }
     }
   }
@@ -1317,30 +1340,30 @@ function drawHealthPill() {
   if (!healthPill) return;
   const cx = healthPill.x + healthPill.w / 2;
   const cy = healthPill.y + healthPill.w / 2;
-  const r  = healthPill.w / 2;
+  const r  = healthPill.w / 2 * (1 + 0.08 * Math.sin(frameCount * 0.13));
   const pulse = 0.5 + 0.5 * Math.sin(frameCount * 0.13);
   g.save();
-  g.shadowColor = `rgba(255,200,0,${(0.5 + 0.4 * pulse).toFixed(2)})`;
-  g.shadowBlur  = 12 + pulse * 10;
-  const gr = g.createRadialGradient(cx - r * 0.3, cy - r * 0.3, 1, cx, cy, r);
-  gr.addColorStop(0,    '#fff7a0');
-  gr.addColorStop(0.25, '#f1c40f');
-  gr.addColorStop(0.7,  '#d4a017');
-  gr.addColorStop(1,    '#8a6000');
-  g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2);
-  g.fillStyle = gr; g.fill();
+  g.shadowColor = `rgba(255,0,60,${(0.6 + 0.4 * pulse).toFixed(2)})`;
+  g.shadowBlur  = 14 + pulse * 12;
+  // Heart path
+  function heartPath() {
+    g.beginPath();
+    g.moveTo(cx, cy + r * 0.75);
+    g.bezierCurveTo(cx - r * 1.5, cy + r * 0.1, cx - r * 1.5, cy - r * 0.85, cx, cy - r * 0.25);
+    g.bezierCurveTo(cx + r * 1.5, cy - r * 0.85, cx + r * 1.5, cy + r * 0.1, cx, cy + r * 0.75);
+    g.closePath();
+  }
+  const gr = g.createRadialGradient(cx, cy - r * 0.1, 1, cx, cy + r * 0.2, r * 1.4);
+  gr.addColorStop(0,   '#ff6088');
+  gr.addColorStop(0.5, '#e8002a');
+  gr.addColorStop(1,   '#8a0018');
+  heartPath(); g.fillStyle = gr; g.fill();
   g.shadowBlur = 0;
-  g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2);
-  g.strokeStyle = 'rgba(180,120,0,0.85)'; g.lineWidth = 2; g.stroke();
-  g.beginPath(); g.arc(cx, cy, r * 0.68, 0, Math.PI * 2);
-  g.strokeStyle = 'rgba(180,120,0,0.5)'; g.lineWidth = 1; g.stroke();
-  g.fillStyle = `rgba(130,80,0,${(0.8 + 0.2 * pulse).toFixed(2)})`;
-  g.font = `bold ${Math.round(r * 1.1)}px monospace`;
-  g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillText('€', cx, cy + 1);
+  heartPath(); g.strokeStyle = 'rgba(255,80,100,0.7)'; g.lineWidth = 1.5; g.stroke();
+  // Glanzpunkt
   g.beginPath();
-  g.ellipse(cx - r * 0.28, cy - r * 0.32, r * 0.22, r * 0.13, -0.5, 0, Math.PI * 2);
-  g.fillStyle = `rgba(255,255,220,${(0.55 + 0.3 * pulse).toFixed(2)})`; g.fill();
+  g.ellipse(cx - r * 0.4, cy - r * 0.35, r * 0.28, r * 0.15, -0.6, 0, Math.PI * 2);
+  g.fillStyle = `rgba(255,255,255,${(0.45 + 0.3 * pulse).toFixed(2)})`; g.fill();
   g.restore();
 }
 
@@ -1362,6 +1385,7 @@ function drawHealthAnim() {
     g.restore();
   }
 }
+
 
 function drawRocketOnPad() {
   if (!hasRocket) return;
