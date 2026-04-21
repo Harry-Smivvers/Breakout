@@ -40,6 +40,21 @@ function genLevel(lvl) {
         });
       }
     }
+    // Ensure at least 30 % PU stones; top up to 40 % if needed
+    const total = bricks.length;
+    if (total > 0) {
+      const puCount = () => bricks.filter(b => b.pu !== null).length;
+      if (puCount() / total < 0.30) {
+        const target = Math.ceil(total * 0.40);
+        // Collect plain bricks in random order
+        const plain = bricks.filter(b => b.pu === null)
+          .sort(() => Math.random() - 0.5);
+        for (const b of plain) {
+          if (puCount() >= target) break;
+          b.pu = PU_TYPES[Math.floor(Math.random() * PU_TYPES.length)];
+        }
+      }
+    }
     return;
   }
 
