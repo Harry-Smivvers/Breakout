@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>Breakout</title>
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="apple-touch-icon" href="favicon.png">
   <style>
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
@@ -706,24 +708,17 @@ function update(dt) {
     b.y += b.vy * dt;
 
 
-    // Option A: auto-nudge after 120 frames of near-horizontal movement
-    if (Math.abs(b.vy) < Math.abs(b.vx) * 0.18) {
-      b.flatTimer = (b.flatTimer || 0) + dt;
-      if (b.flatTimer >= 120) {
-        const sp = Math.hypot(b.vx, b.vy);
-        b.vy = (b.vy <= 0 ? -1 : 1) * sp * 0.3;
-        b.flatTimer = 0;
-      }
-    } else {
-      b.flatTimer = 0;
-    }
-
     // Wall collisions – oben/links/rechts immer geschlossen
     if (b.y - b.r < FT) { b.y = FT + b.r; b.vy =  Math.abs(b.vy); snd.wall(); }
-    if (b.x - b.r < FL) { b.x = FL + b.r; b.vx =  Math.abs(b.vx); snd.wall();
-      if (Math.abs(b.vy) / Math.abs(b.vx) < 0.18) { const sp = Math.hypot(b.vx, b.vy); b.vy += (b.vy <= 0 ? -1 : 1) * sp * 0.25; } }
-    if (b.x + b.r > FR) { b.x = FR - b.r; b.vx = -Math.abs(b.vx); snd.wall();
-      if (Math.abs(b.vy) / Math.abs(b.vx) < 0.18) { const sp = Math.hypot(b.vx, b.vy); b.vy += (b.vy <= 0 ? -1 : 1) * sp * 0.25; } }
+    if (b.x - b.r < FL) { b.x = FL + b.r; b.vx =  Math.abs(b.vx); snd.wall(); }
+    if (b.x + b.r > FR) { b.x = FR - b.r; b.vx = -Math.abs(b.vx); snd.wall(); }
+
+    // Winkel-Clamp: Ball immer zwischen 45° und 135° von der Horizontalen halten
+    { const sp = Math.hypot(b.vx, b.vy);
+      if (sp > 0 && Math.abs(b.vy) < Math.abs(b.vx)) {
+        b.vx = Math.sign(b.vx) * sp * Math.SQRT1_2;
+        b.vy = (b.vy <= 0 ? -1 : 1) * sp * Math.SQRT1_2;
+      } }
 
     // Unten: Wall-Power-up oder Ball verloren
     const walled = bottomWall || wallPowerTimer > 0 || wallAnimOut > 0;
@@ -757,7 +752,7 @@ function update(dt) {
         b.x + b.r >= pad.x &&
         b.x - b.r <= pad.x + pad.w) {
       const rel   = (b.x - (pad.x + pad.w / 2)) / (pad.w / 2);  // -1 links … +1 rechts
-      const angle = rel * (Math.PI / 3);                           // ±60°
+      const angle = rel * (Math.PI / 4);                           // ±45°
       const sp    = Math.hypot(b.vx, b.vy);
       b.vx =  Math.sin(angle) * sp;
       b.vy = -Math.cos(angle) * sp;   // immer nach oben
