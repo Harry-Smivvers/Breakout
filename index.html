@@ -54,6 +54,7 @@
   <button class="btn" id="bSpeedDown">−</button>
 </div>
 <script src="audio.js"></script>
+<script src="level-def.js"></script>
 <script src="level.js"></script>
 <script>
 'use strict';
@@ -595,14 +596,6 @@ function update(dt) {
     if (p.life <= 0) healthAnim.splice(i, 1);
   }
 
-  // Pill spawning (when ≤3 bricks remain)
-  if (state === 'PLAYING' && !pillSpawned && !hasRocket && !rocket && !pill) {
-    const alive = bricks.filter(b => b.alive).length;
-    if (alive > 0 && alive <= 3) {
-      pill = { x: FL + Math.random() * (FR - FL - PILL_W), y: FT - PILL_H };
-      pillSpawned = true;
-    }
-  }
   // Pill physics
   if (pill) {
     pill.y += PILL_VY * dt;
