@@ -1,6 +1,6 @@
 // ─── Level-Definitionen (ASCII-Karte) ────────────────────────────────────────
 //
-// Gitter: 7 Spalten × 14 Zeilen (max)
+// Gitter: 7 Spalten × 12 Zeilen (max)
 // Jede Zeile genau 7 Zeichen, Leerzeilen am Anfang/Ende werden ignoriert.
 //
 // Zeichen:
